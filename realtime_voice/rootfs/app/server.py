@@ -62,9 +62,7 @@ class VoiceServer:
         self.timers = TimerManager(settings.timers_path)
         self.http = None
         self.speakers = None
-        self.hardware_clients = {
-            client.client_id: client for client in settings.hardware_clients
-        }
+        self.hardware_clients = {client.client_id: client for client in settings.hardware_clients}
 
     async def start(self, app: web.Application) -> None:
         import aiohttp

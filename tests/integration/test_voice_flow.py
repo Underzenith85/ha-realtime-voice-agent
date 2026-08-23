@@ -197,9 +197,7 @@ async def start_voice_client(client: TestClient, client_id: str) -> Any:
 
 
 async def start_device_client(client: TestClient, client_id: str, token: str) -> Any:
-    ws = await client.ws_connect(
-        "/device/ws", headers={"Authorization": f"Bearer {token}"}
-    )
+    ws = await client.ws_connect("/device/ws", headers={"Authorization": f"Bearer {token}"})
     await ws.send_json(
         {
             "type": "hello",
