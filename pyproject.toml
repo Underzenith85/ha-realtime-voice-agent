@@ -1,0 +1,25 @@
+[project]
+name = "ha-realtime-voice-agent"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["realtime_voice/rootfs"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[dependency-groups]
+dev = [
+  "aiohttp>=3.11,<4",
+  "mcp>=1.12,<2",
+  "pytest>=8.3",
+  "pytest-asyncio>=0.25",
+  "pyyaml>=6.0",
+  "ruff>=0.9",
+]

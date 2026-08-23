@@ -1,0 +1,56 @@
+name: Realtime Voice Agent
+version: "0.1.0"
+slug: realtime_voice_agent
+description: OpenAI Realtime voice gateway with Home Assistant and MCP tools
+url: https://github.com/Underzenith85/ha-realtime-voice-agent
+arch:
+  - amd64
+  - aarch64
+homeassistant: 2026.8.0
+stage: experimental
+init: false
+ingress: true
+ingress_port: 8099
+ingress_stream: true
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: Signed audio streams for LAN speakers (UI remains ingress-only)
+panel_icon: mdi:account-voice
+homeassistant_api: true
+map:
+  - type: addon_config
+    read_only: false
+options:
+  openai_api_key: ""
+  model: gpt-realtime-2.1
+  voice: marin
+  instructions: >-
+    You are a concise Home Assistant voice agent. Use tools for current state and
+    actions. Never claim an action succeeded until its tool returns successfully.
+  max_sessions: 4
+  idle_timeout_seconds: 600
+  ha_mcp_url: http://supervisor/core/api/mcp/assist
+  speaker_base_url: http://homeassistant.local:8099
+  mcp_servers: []
+schema:
+  openai_api_key: password
+  model: str
+  voice: str
+  instructions: str
+  max_sessions: int(1,16)
+  idle_timeout_seconds: int(60,7200)
+  ha_mcp_url: url
+  speaker_base_url: url
+  mcp_servers:
+    - name: str
+      url: url
+      transport: list(streamable_http|sse)
+      token: password?
+      allowed_tools:
+        - str
+      headers:
+        - name: str
+          value: password
+startup: application
+boot: auto

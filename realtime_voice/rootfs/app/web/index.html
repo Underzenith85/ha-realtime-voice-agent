@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Realtime Voice Agent</title>
+    <link rel="stylesheet" href="static/style.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Realtime Voice Agent</h1>
+        <span id="status" class="status">Disconnected</span>
+      </header>
+      <section class="card">
+        <button id="ptt" disabled>Hold to talk</button>
+        <p id="transcript" aria-live="polite">Connect to begin.</p>
+      </section>
+      <section class="card routing">
+        <h2>Output</h2>
+        <label>Destination
+          <select id="sink">
+            <option value="browser">This browser</option>
+            <option value="media_player">Home Assistant speaker</option>
+          </select>
+        </label>
+        <label>Speaker
+          <select id="speaker" disabled></select>
+        </label>
+        <label>Playback mode
+          <select id="mode" disabled>
+            <option value="buffered">Buffered (compatible)</option>
+            <option value="progressive">Progressive (experimental)</option>
+          </select>
+        </label>
+        <label class="check"><input id="announce" type="checkbox" checked disabled> Announcement</label>
+        <button id="saveRoute" disabled>Save output route</button>
+      </section>
+    </main>
+    <script type="module" src="static/app.js"></script>
+  </body>
+</html>
