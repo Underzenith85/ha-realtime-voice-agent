@@ -26,12 +26,15 @@ class FakeServices:
     tool_outputs: list[dict[str, Any]] = field(default_factory=list)
     play_calls: list[dict[str, Any]] = field(default_factory=list)
     held_response: asyncio.Event = field(default_factory=asyncio.Event)
+    openai_connections: list[list[dict[str, Any]]] = field(default_factory=list)
 
     async def realtime(self, request: web.Request) -> web.WebSocketResponse:
         assert request.headers["Authorization"] == "Bearer test-key"
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         audio = bytearray()
+        connection_events: list[dict[str, Any]] = []
+        self.openai_connections.append(connection_events)
         awaiting_tool = False
         tool_completed = False
         async for message in ws:
@@ -39,6 +42,7 @@ class FakeServices:
                 continue
             event = json.loads(message.data)
             self.openai_events.append(event)
+            connection_events.append(event)
             if event["type"] == "input_audio_buffer.clear":
                 audio.clear()
             elif event["type"] == "input_audio_buffer.append":
@@ -56,9 +60,21 @@ class FakeServices:
             elif event["type"] == "input_audio_buffer.commit" and audio == b"hold-response":
                 await ws.send_json({"type": "response.created"})
                 self.held_response.set()
+            elif event["type"] == "input_audio_buffer.commit" and audio == b"disconnect":
+                await ws.close()
+                break
             elif event["type"] == "input_audio_buffer.commit":
+                await ws.send_json(
+                    {
+                        "type": "conversation.item.input_audio_transcription.completed",
+                        "transcript": audio.decode(),
+                    }
+                )
                 await self._send_response(ws, b"browser audio", "Hello from the fake model")
-            elif event["type"] == "conversation.item.create":
+            elif (
+                event["type"] == "conversation.item.create"
+                and event.get("item", {}).get("type") == "function_call_output"
+            ):
                 self.tool_outputs.append(event)
                 tool_completed = True
             elif event["type"] == "response.create" and awaiting_tool and tool_completed:
@@ -396,3 +412,87 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
             await speaker.close()
             await overlap.close()
             await progressive.close()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_restores_context_and_reports_diagnostics(tmp_path: Any) -> None:
+    services = FakeServices()
+    external = web.Application()
+    external.router.add_get("/v1/realtime", services.realtime)
+
+    async with run_aiohttp_app(external) as external_server:
+        base_url = str(external_server.make_url("")).rstrip("/")
+        app = create_app(
+            Settings(
+                openai_api_key="test-key",
+                openai_realtime_url=f"{base_url}/v1/realtime",
+                routes_path=str(tmp_path / "routes.json"),
+            )
+        )
+        async with TestClient(TestServer(app)) as client:
+            ws = await start_voice_client(client, "recovering-client")
+            await ws.send_json({"type": "ptt_start"})
+            await ws.send_bytes(b"remember me")
+            await ws.send_json({"type": "ptt_stop"})
+            await receive_type(ws, "response.done")
+
+            await ws.send_json({"type": "ptt_start"})
+            await ws.send_bytes(b"disconnect")
+            await ws.send_json({"type": "ptt_stop"})
+            assert (await receive_type(ws, "session.reconnected"))["reconnects"] == 1
+            await ws.send_json({"type": "diagnostics_get"})
+            diagnostics = await receive_type(ws, "session_diagnostics")
+            assert diagnostics["session_count"] == 1
+            assert diagnostics["session"]["reconnects"] == 1
+            assert diagnostics["session"]["history_turns"] == 2
+
+            restored = services.openai_connections[1]
+            restored_messages = [
+                event["item"]
+                for event in restored
+                if event.get("type") == "conversation.item.create"
+                and event.get("item", {}).get("type") == "message"
+            ]
+            assert restored_messages[0]["content"][0]["text"] == "remember me"
+            assert restored_messages[1]["content"][0]["text"] == "Hello from the fake model"
+            await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_idle_expiration_and_four_session_history_isolation(tmp_path: Any) -> None:
+    services = FakeServices()
+    external = web.Application()
+    external.router.add_get("/v1/realtime", services.realtime)
+
+    async with run_aiohttp_app(external) as external_server:
+        base_url = str(external_server.make_url("")).rstrip("/")
+        app = create_app(
+            Settings(
+                openai_api_key="test-key",
+                openai_realtime_url=f"{base_url}/v1/realtime",
+                routes_path=str(tmp_path / "routes.json"),
+                idle_timeout_seconds=1,
+            )
+        )
+        async with TestClient(TestServer(app)) as client:
+            clients = [await start_voice_client(client, f"client-{index}") for index in range(4)]
+            for index, ws in enumerate(clients):
+                await ws.send_json({"type": "ptt_start"})
+                await ws.send_bytes(f"unique-{index}".encode())
+                await ws.send_json({"type": "ptt_stop"})
+                await receive_type(ws, "response.done")
+
+            histories = {
+                session.client_id: session.history.current.user
+                for session in app["voice"].sessions
+                if session.history.current
+            }
+            assert histories == {f"client-{index}": f"unique-{index}" for index in range(4)}
+
+            expired = await asyncio.gather(*(receive_type(ws, "session.expired") for ws in clients))
+            assert all(event["reason"] == "idle_timeout" for event in expired)
+            await asyncio.gather(*(ws.close() for ws in clients))
+            async with asyncio.timeout(5):
+                while app["voice"]._session_count:
+                    await asyncio.sleep(0.01)
+            assert app["voice"].idle_expirations == 4

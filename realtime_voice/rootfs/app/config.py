@@ -13,6 +13,8 @@ DEFAULT_VOICE = "marin"
 DEFAULT_INSTRUCTIONS = "You are a concise Home Assistant voice agent."
 DEFAULT_MAX_SESSIONS = 4
 DEFAULT_IDLE_TIMEOUT = 600
+DEFAULT_HISTORY_TURN_LIMIT = 20
+DEFAULT_INPUT_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe"
 DEFAULT_HA_MCP_URL = "http://supervisor/core/api/mcp/assist"
 DEFAULT_HA_API_URL = "http://supervisor/core"
 DEFAULT_OPENAI_REALTIME_URL = "https://api.openai.com/v1/realtime"
@@ -51,6 +53,8 @@ class Settings:
     instructions: str = DEFAULT_INSTRUCTIONS
     max_sessions: int = DEFAULT_MAX_SESSIONS
     idle_timeout_seconds: int = DEFAULT_IDLE_TIMEOUT
+    history_turn_limit: int = DEFAULT_HISTORY_TURN_LIMIT
+    input_transcription_model: str = DEFAULT_INPUT_TRANSCRIPTION_MODEL
     ha_mcp_url: str = DEFAULT_HA_MCP_URL
     ha_api_url: str = DEFAULT_HA_API_URL
     openai_realtime_url: str = DEFAULT_OPENAI_REALTIME_URL
@@ -83,6 +87,10 @@ class Settings:
             instructions=raw.get("instructions", DEFAULT_INSTRUCTIONS),
             max_sessions=int(raw.get("max_sessions", DEFAULT_MAX_SESSIONS)),
             idle_timeout_seconds=int(raw.get("idle_timeout_seconds", DEFAULT_IDLE_TIMEOUT)),
+            history_turn_limit=int(raw.get("history_turn_limit", DEFAULT_HISTORY_TURN_LIMIT)),
+            input_transcription_model=raw.get(
+                "input_transcription_model", DEFAULT_INPUT_TRANSCRIPTION_MODEL
+            ),
             ha_mcp_url=raw.get("ha_mcp_url", DEFAULT_HA_MCP_URL),
             speaker_base_url=raw.get("speaker_base_url", DEFAULT_SPEAKER_BASE_URL),
             mcp_servers=tuple(servers),
