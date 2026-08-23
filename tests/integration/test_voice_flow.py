@@ -25,8 +25,10 @@ class FakeServices:
     openai_events: list[dict[str, Any]] = field(default_factory=list)
     tool_outputs: list[dict[str, Any]] = field(default_factory=list)
     play_calls: list[dict[str, Any]] = field(default_factory=list)
+    stop_calls: list[dict[str, Any]] = field(default_factory=list)
     held_response: asyncio.Event = field(default_factory=asyncio.Event)
     openai_connections: list[list[dict[str, Any]]] = field(default_factory=list)
+    fail_next_play: bool = False
 
     async def realtime(self, request: web.Request) -> web.WebSocketResponse:
         assert request.headers["Authorization"] == "Bearer test-key"
@@ -108,6 +110,13 @@ class FakeServices:
 
     async def play_media(self, request: web.Request) -> web.Response:
         self.play_calls.append(await request.json())
+        if self.fail_next_play:
+            self.fail_next_play = False
+            raise web.HTTPInternalServerError(text="simulated player rejection")
+        return web.json_response([])
+
+    async def stop_media(self, request: web.Request) -> web.Response:
+        self.stop_calls.append(await request.json())
         return web.json_response([])
 
 
@@ -212,6 +221,7 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
     external.router.add_get("/v1/realtime", services.realtime)
     external.router.add_get("/api/states", services.states)
     external.router.add_post("/api/services/media_player/play_media", services.play_media)
+    external.router.add_post("/api/services/media_player/media_stop", services.stop_media)
 
     async def fake_encode(pcm: bytes) -> bytes:
         return b"fake-mp3:" + pcm
@@ -326,6 +336,7 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
             route_test = await receive_type(speaker, "route_test_result")
             assert route_test["ok"] is True
             assert len(services.play_calls) == 2
+            assert services.stop_calls[-1]["entity_id"] == "media_player.sonos_beam"
 
             overlap = await start_voice_client(client, "overlap-client")
             progressive = await start_voice_client(client, "progressive-client")
@@ -419,6 +430,21 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
             progressive_response = await client.get(f"/media/{progressive_token}")
             assert progressive_response.status == 200
             assert await progressive_response.read() == b"progressive:browser audio"
+
+            services.fail_next_play = True
+            await progressive.send_json({"type": "ptt_start"})
+            await progressive.send_bytes(b"plain-turn")
+            await progressive.send_json({"type": "ptt_stop"})
+            failed_progressive = await receive_type(progressive, "playback_status")
+            assert failed_progressive["ok"] is False
+            assert failed_progressive["fallback"] == "buffered"
+            buffered_fallback = await receive_type(progressive, "playback_status")
+            assert buffered_fallback["mode"] == "buffered"
+            assert buffered_fallback["fallback_used"] is True
+            await receive_type(progressive, "response.done")
+            fallback_token = services.play_calls[-1]["media_content_id"].rsplit("/", 1)[-1]
+            fallback_response = await client.get(f"/media/{fallback_token}")
+            assert await fallback_response.read() == b"fake-mp3:browser audio"
 
             await browser.close()
             async with asyncio.timeout(5):

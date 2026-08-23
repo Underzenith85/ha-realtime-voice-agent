@@ -40,3 +40,7 @@ sessions.
 
 For generic speakers, publish port 8099 only to the trusted LAN and set
 `speaker_base_url` to the exact address those devices use to reach the add-on.
+Buffered mode is recommended. Progressive mode reports request timing and can retry the
+same response in buffered mode when Home Assistant rejects the initial playback request.
+The latest response targeting an entity stops older playback first. See the repository's
+speaker compatibility matrix for device-specific validation status.

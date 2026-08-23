@@ -6,6 +6,7 @@ const sink = byId("sink");
 const speaker = byId("speaker");
 const mode = byId("mode");
 const announce = byId("announce");
+const progressiveFallback = byId("progressiveFallback");
 const saveRoute = byId("saveRoute");
 const testRoute = byId("testRoute");
 const routeResult = byId("routeResult");
@@ -29,6 +30,7 @@ function createClientId() {
 
 const clientId = localStorage.getItem("voiceClientId") || createClientId();
 localStorage.setItem("voiceClientId", clientId);
+const speakerModes = JSON.parse(localStorage.getItem("speakerModes") || "{}");
 let socket;
 let reconnectTimer;
 let generation = 0;
@@ -55,18 +57,20 @@ function websocketUrl() {
 }
 
 function selectedRoute() {
-  return { sink: sink.value, entity_id: sink.value === "media_player" ? speaker.value || null : null, mode: mode.value, announce: announce.checked, volume: null };
+  return { sink: sink.value, entity_id: sink.value === "media_player" ? speaker.value || null : null, mode: mode.value, announce: announce.checked, volume: null, progressive_fallback: progressiveFallback.checked };
 }
 
 function setRoute(route) {
   sink.value = route.sink;
   mode.value = route.mode;
   announce.checked = route.announce;
+  progressiveFallback.checked = route.progressive_fallback ?? true;
   if (route.entity_id) speaker.value = route.entity_id;
   const remote = route.sink === "media_player";
   speaker.disabled = !remote;
   mode.disabled = !remote;
   announce.disabled = !remote;
+  progressiveFallback.disabled = !remote;
   routeSummary.textContent = `Current route: ${remote ? route.entity_id || "speaker not selected" : "this browser"} · ${route.mode}`;
 }
 
@@ -173,11 +177,18 @@ function connect() {
       speaker.replaceChildren(...message.items.map(item => new Option(item.name, item.entity_id)));
     } else if (message.type === "route") {
       setRoute(message.route);
+      if (message.route.entity_id) {
+        speakerModes[message.route.entity_id] = message.route.mode;
+        localStorage.setItem("speakerModes", JSON.stringify(speakerModes));
+      }
       saveRoute.textContent = "Route saved";
       setTimeout(() => { saveRoute.textContent = "Save output route"; }, 1500);
     } else if (message.type === "route_test_result") {
-      routeResult.textContent = message.ok ? `Success: ${message.message}` : `Failed: ${message.error.message}`;
+      routeResult.textContent = message.ok ? `Success: ${message.message} (${message.request_latency_ms} ms request)` : `Failed: ${message.error.message}`;
       testRoute.disabled = false;
+    } else if (message.type === "playback_status") {
+      const fallback = message.fallback_used ? " · progressive fallback used" : message.fallback ? ` · retrying as ${message.fallback}` : "";
+      routeResult.textContent = `${message.mode} playback${message.ok === false ? " failed" : " started"}${fallback}${message.request_latency_ms === undefined ? "" : ` · ${message.request_latency_ms} ms request`}`;
     } else if (message.type === "mcp_status") {
       setMcpStatus(message.mcp);
       refreshTools.disabled = false;
@@ -261,7 +272,14 @@ sink.addEventListener("change", () => {
   speaker.disabled = !remote;
   mode.disabled = !remote;
   announce.disabled = !remote;
+  progressiveFallback.disabled = !remote;
   routeResult.textContent = "Unsaved route selection.";
+});
+speaker.addEventListener("change", () => {
+  mode.value = speakerModes[speaker.value] || "buffered";
+  routeResult.textContent = speakerModes[speaker.value]
+    ? `Recommended saved mode: ${mode.value}.`
+    : "No tested mode saved for this speaker; buffered is recommended.";
 });
 saveRoute.addEventListener("click", () => { saveRoute.textContent = "Saving…"; socket.send(JSON.stringify({ type: "route_set", route: selectedRoute() })); });
 testRoute.addEventListener("click", () => { testRoute.disabled = true; routeResult.textContent = "Testing…"; socket.send(JSON.stringify({ type: "route_test", route: selectedRoute() })); });
