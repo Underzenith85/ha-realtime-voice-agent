@@ -36,6 +36,14 @@
         <label class="check"><input id="announce" type="checkbox" checked disabled> Announcement</label>
         <button id="saveRoute" disabled>Save output route</button>
       </section>
+      <section class="card diagnostics">
+        <div class="section-heading">
+          <h2>MCP tools</h2>
+          <button id="refreshTools" disabled>Refresh tools</button>
+        </div>
+        <p id="catalogSummary">Connect to view MCP status.</p>
+        <ul id="mcpServers"></ul>
+      </section>
     </main>
     <script type="module" src="static/app.js"></script>
   </body>
