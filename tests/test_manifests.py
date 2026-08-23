@@ -21,3 +21,9 @@ def test_addon_manifest() -> None:
     assert set(manifest["arch"]) == {"amd64", "aarch64"}
     assert (ROOT / "realtime_voice/Dockerfile").is_file()
     assert (ROOT / "realtime_voice/DOCS.md").is_file()
+
+
+def test_service_starts_python_from_root() -> None:
+    run_script = (ROOT / "realtime_voice/rootfs/etc/services.d/realtime-voice/run").read_text()
+    commands = [line.strip() for line in run_script.splitlines() if line.strip()]
+    assert commands[-2:] == ["cd /", "exec python3 -m app"]
