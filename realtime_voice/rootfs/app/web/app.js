@@ -93,6 +93,9 @@ async function connect() {
       socket.send(JSON.stringify({ type: "speakers_list" }));
     } else if (message.type === "speakers") {
       speaker.replaceChildren(...message.items.map(item => new Option(item.name, item.entity_id)));
+    } else if (message.type === "route") {
+      saveRoute.textContent = "Route saved";
+      setTimeout(() => { saveRoute.textContent = "Save output route"; }, 1500);
     } else if (message.type === "response.output_audio_transcript.delta") {
       transcript.textContent += message.delta;
     } else if (message.type === "response.done") {
@@ -127,9 +130,12 @@ for (const eventName of ["pointerup", "pointercancel", "pointerleave"]) {
 }
 
 sink.addEventListener("change", () => setRoute({ sink: sink.value, mode: mode.value, announce: announce.checked, entity_id: speaker.value || null }));
-saveRoute.addEventListener("click", () => socket.send(JSON.stringify({
-  type: "route_set",
-  route: { sink: sink.value, entity_id: sink.value === "media_player" ? speaker.value : null, mode: mode.value, announce: announce.checked, volume: null },
-})));
+saveRoute.addEventListener("click", () => {
+  saveRoute.textContent = "Saving…";
+  socket.send(JSON.stringify({
+    type: "route_set",
+    route: { sink: sink.value, entity_id: sink.value === "media_player" ? speaker.value : null, mode: mode.value, announce: announce.checked, volume: null },
+  }));
+});
 
 connect();
