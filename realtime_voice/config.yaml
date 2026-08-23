@@ -10,7 +10,6 @@ homeassistant: 2026.8.0
 stage: experimental
 init: false
 ingress: true
-ingress_port: 8099
 ingress_stream: true
 ports:
   8099/tcp: 8099
@@ -52,5 +51,3 @@ schema:
       headers:
         - name: str
           value: password
-startup: application
-boot: auto

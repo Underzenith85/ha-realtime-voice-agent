@@ -14,6 +14,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  addon-config:
+    name: App configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Validate Home Assistant App configuration
+        uses: frenck/action-addon-linter@v2.21.0
+        with:
+          path: "./realtime_voice"
+
   quality:
     name: Quality
     runs-on: ubuntu-latest
