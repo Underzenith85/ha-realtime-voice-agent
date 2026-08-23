@@ -16,6 +16,7 @@ from aiohttp import WSMsgType, web
 
 from app.config import Settings
 from app.encoder import ProgressiveMp3Encoder, encode_mp3
+from app.ha_apis import discover_managed_mcp_configs
 from app.mcp_broker import McpBroker
 from app.media import MediaObject, MediaStore
 from app.protocol import parse_hello
@@ -63,6 +64,11 @@ class VoiceServer:
         token = os.getenv("SUPERVISOR_TOKEN", "")
         self.speakers = SpeakerController(self.http, self.settings.ha_api_url, token)
         await self.timers.start()
+        try:
+            managed = await discover_managed_mcp_configs(self.http, self.settings.ha_api_url, token)
+            await self.broker.reconcile_managed(managed)
+        except Exception as err:
+            LOGGER.warning("HA-managed MCP API discovery unavailable: %s", type(err).__name__)
         await self.broker.start()
 
     async def stop(self, app: web.Application) -> None:
@@ -329,6 +335,17 @@ class VoiceServer:
                         {"type": "speakers", "items": await self.speakers.list_speakers()}
                     )
                 elif event.get("type") == "tools_refresh":
+                    try:
+                        managed = await discover_managed_mcp_configs(
+                            self.http,
+                            self.settings.ha_api_url,
+                            os.getenv("SUPERVISOR_TOKEN", ""),
+                        )
+                        await self.broker.reconcile_managed(managed)
+                    except Exception as err:
+                        LOGGER.warning(
+                            "HA-managed MCP API refresh unavailable: %s", type(err).__name__
+                        )
                     await self.broker.refresh()
                     await realtime.sync_tools()
                     await ws.send_json({"type": "mcp_status", "mcp": self.broker.status()})

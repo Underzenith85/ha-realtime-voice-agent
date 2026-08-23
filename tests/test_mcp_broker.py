@@ -196,6 +196,27 @@ async def test_catalog_versions_schema_diagnostics_and_collision_names() -> None
     assert set(broker.bindings) == {"mcp_homeassistant_replacement"}
 
 
+async def test_ha_managed_server_exposes_tools_without_allowlist_and_hides_credentials() -> None:
+    config = McpServerConfig(
+        name="ha_oauth_entry",
+        url="http://supervisor/core/api/mcp/mcp-entry",
+        headers={"Authorization": "Bearer secret"},
+        expose_all_tools=True,
+        managed_by_home_assistant=True,
+    )
+    broker = McpBroker((config,))
+    connection = broker.connections[config.name]
+    connection.health.status = "connected"
+    connection.tools = (tool("remote_task"),)
+
+    await broker._rebuild_catalog()
+
+    assert set(broker.bindings) == {"mcp_ha_oauth_entry_remote_task"}
+    serialized_status = str(broker.status())
+    assert "secret" not in serialized_status
+    assert config.url not in serialized_status
+
+
 class RecordingConnection:
     def __init__(self, result=None, timeout: float = 30) -> None:
         self.config = McpServerConfig(

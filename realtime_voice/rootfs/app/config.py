@@ -30,6 +30,8 @@ class McpServerConfig:
     headers: dict[str, str] = field(default_factory=dict)
     allowed_tools: frozenset[str] = field(default_factory=frozenset)
     call_timeout_seconds: float = 30
+    expose_all_tools: bool = False
+    managed_by_home_assistant: bool = False
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> McpServerConfig:
@@ -85,6 +87,7 @@ class Settings:
                     name="homeassistant",
                     url=raw.get("ha_mcp_url", DEFAULT_HA_MCP_URL),
                     headers={"Authorization": f"Bearer {supervisor_token}"},
+                    expose_all_tools=True,
                 ),
             )
         return cls(
@@ -99,6 +102,7 @@ class Settings:
                 "input_transcription_model", DEFAULT_INPUT_TRANSCRIPTION_MODEL
             ),
             ha_mcp_url=raw.get("ha_mcp_url", DEFAULT_HA_MCP_URL),
+            ha_api_url=raw.get("ha_api_url", DEFAULT_HA_API_URL),
             speaker_base_url=raw.get("speaker_base_url", DEFAULT_SPEAKER_BASE_URL),
             session_rate_limit_per_minute=int(raw.get("session_rate_limit_per_minute", 30)),
             media_rate_limit_per_minute=int(raw.get("media_rate_limit_per_minute", 60)),

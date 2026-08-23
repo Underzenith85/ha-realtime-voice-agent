@@ -27,6 +27,11 @@ OAuth MCP servers should initially be configured through Home Assistant's built-
 client integration, which owns the OAuth flow and contributes its tools to Assist. A
 pre-issued OAuth access token can also be supplied as an add-on MCP bearer token.
 
+The App automatically discovers MCP APIs managed by Home Assistant and accesses them
+through internal credential-free proxy endpoints; remote OAuth tokens never enter the
+App. See [OAuth-protected MCP servers](docs/oauth-mcp.md) for onboarding and the current
+dynamic-client-registration limitation.
+
 ## Requirements
 
 - Home Assistant OS or Home Assistant Supervised with access to the App/Add-on Store.
