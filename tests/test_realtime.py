@@ -8,7 +8,9 @@ from app.realtime import ConversationHistory, RealtimeSession, ToolRecord
 
 
 class SlowBroker:
-    async def call_binding(self, binding: ToolBinding, arguments: dict[str, Any]) -> str:
+    async def call_binding(
+        self, binding: ToolBinding, arguments: dict[str, Any], *, client_id: str | None = None
+    ) -> str:
         await asyncio.sleep(60)
         return "unreachable"
 
@@ -31,7 +33,9 @@ class MutableBroker:
     def snapshot(self):
         return self.version, self.bindings.copy()
 
-    async def call_binding(self, binding: ToolBinding, arguments: dict[str, Any]) -> str:
+    async def call_binding(
+        self, binding: ToolBinding, arguments: dict[str, Any], *, client_id: str | None = None
+    ) -> str:
         self.called.append(binding)
         return json.dumps({"ok": True})
 
@@ -145,7 +149,9 @@ class ConcurrentBroker(MutableBroker):
         self.active = 0
         self.max_active = 0
 
-    async def call_binding(self, binding: ToolBinding, arguments: dict[str, Any]) -> str:
+    async def call_binding(
+        self, binding: ToolBinding, arguments: dict[str, Any], *, client_id: str | None = None
+    ) -> str:
         self.active += 1
         self.max_active = max(self.max_active, self.active)
         await asyncio.sleep(0.01)

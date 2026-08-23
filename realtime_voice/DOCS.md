@@ -22,5 +22,13 @@ including text transcripts and tool results. Audio itself is never retained. The
 UI's **Session** diagnostics show active session count, age, idle time, reconnects, and
 remembered turns. Each session permits at most four simultaneous tool calls.
 
+MCP arguments are validated against the advertised schema before dispatch. Calls have
+per-server timeouts plus a shared concurrency limit, and audit logs contain only tool and
+server names, timing, outcome, client ID, and an argument hash—not raw arguments. Media
+URLs are short-lived and single-use. Browser connections, tool calls, and media requests
+have configurable per-minute limits. An installation that needs approval for high-risk
+tools can supply the broker policy hook; without one, the existing no-confirmation
+behavior remains unchanged.
+
 For generic speakers, publish port 8099 only to the trusted LAN and set
 `speaker_base_url` to the exact address those devices use to reach the add-on.

@@ -19,6 +19,7 @@ from app.encoder import ProgressiveMp3Encoder, encode_mp3
 from app.mcp_broker import McpBroker
 from app.media import MediaObject, MediaStore
 from app.protocol import parse_hello
+from app.rate_limit import RateLimiter
 from app.realtime import RealtimeSession
 from app.routes import OutputRoute, RouteStore
 from app.speakers import SpeakerController
@@ -41,11 +42,15 @@ class VoiceServer:
         self.routes = RouteStore(settings.routes_path)
         self.routes.load()
         self.media = MediaStore()
-        self.broker = McpBroker(settings.mcp_servers)
+        self.broker = McpBroker(
+            settings.mcp_servers, shared_concurrency=settings.shared_tool_concurrency
+        )
         self.sessions: set[RealtimeSession] = set()
         self._session_lock = asyncio.Lock()
         self._session_count = 0
         self.idle_expirations = 0
+        self.session_rate = RateLimiter(settings.session_rate_limit_per_minute)
+        self.media_rate = RateLimiter(settings.media_rate_limit_per_minute)
         self.http = None
         self.speakers = None
 
@@ -64,6 +69,9 @@ class VoiceServer:
             await self.http.close()
 
     async def websocket(self, request: web.Request) -> web.WebSocketResponse:
+        peer = request.remote or "unknown"
+        if not self.session_rate.allow(peer):
+            raise web.HTTPTooManyRequests(text="session connection rate exceeded")
         async with self._session_lock:
             if self._session_count >= self.settings.max_sessions:
                 raise web.HTTPServiceUnavailable(text="session limit reached")
@@ -227,7 +235,10 @@ class VoiceServer:
         await self.speakers.play(route, url)
 
     async def media_stream(self, request: web.Request) -> web.StreamResponse:
-        item = self.media.get(request.match_info["token"])
+        peer = request.remote or "unknown"
+        if not self.media_rate.allow(peer):
+            raise web.HTTPTooManyRequests(text="media request rate exceeded")
+        item = self.media.claim(request.match_info["token"])
         if item is None:
             raise web.HTTPNotFound()
         response = web.StreamResponse(
