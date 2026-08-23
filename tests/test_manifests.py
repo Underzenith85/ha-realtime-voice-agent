@@ -21,7 +21,7 @@ def test_addon_manifest() -> None:
     assert set(manifest["arch"]) == {"amd64", "aarch64"}
     assert (ROOT / "realtime_voice/Dockerfile").is_file()
     assert (ROOT / "realtime_voice/DOCS.md").is_file()
-    assert manifest["version"] == "0.10.1"
+    assert manifest["version"] == "0.10.2"
     assert manifest["options"]["hardware_clients"] == []
     assert (ROOT / "esphome/components/realtime_voice_client/realtime_voice_client.cpp").is_file()
     assert (ROOT / "docs/voice-pe.md").is_file()
