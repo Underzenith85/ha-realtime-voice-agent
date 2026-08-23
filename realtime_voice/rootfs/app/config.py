@@ -62,6 +62,7 @@ class Settings:
     openai_realtime_url: str = DEFAULT_OPENAI_REALTIME_URL
     speaker_base_url: str = DEFAULT_SPEAKER_BASE_URL
     routes_path: str = "/data/routes.json"
+    timers_path: str = "/data/timers.json"
     tool_timeout_seconds: float = 30
     session_rate_limit_per_minute: int = 30
     media_rate_limit_per_minute: int = 60

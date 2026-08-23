@@ -20,6 +20,8 @@ as an App container, which is required for the long-lived Realtime, MCP, and aud
 - Short-lived random media URLs; audio and transcripts are not persisted.
 - Automatic Realtime reconnect with a bounded, per-client text/tool history (20 turns
   by default), idle expiration, and session diagnostics.
+- Persistent client-scoped voice timers and alarms with create, list, cancel, pause, and
+  resume tools plus completion audio through the originating client's route.
 
 OAuth MCP servers should initially be configured through Home Assistant's built-in MCP
 client integration, which owns the OAuth flow and contributes its tools to Assist. A
@@ -137,6 +139,17 @@ reports first-response latency and structured errors, and supports accessible Sp
 push-to-talk. Output routes can be tested before saving. Explicit cancel and conversation
 reset controls are available, and network/sleep reconnects are guarded against duplicate
 sessions and capture resources.
+
+## Timers and alarms
+
+Timers are App-owned rather than Home Assistant `timer` helpers: this preserves the
+originating browser identity needed for completion routing and natural follow-ups. They
+are persisted in `/data/timers.json`, survive App restarts, and are scoped so one client
+cannot list or modify another client's timers. Alarms accept an RFC 3339 timestamp with
+an explicit timezone. A disconnected client's completed timer is retained and announced
+after that client reconnects. If its configured speaker is unavailable, completion PCM
+is sent to the browser instead. A full Home Assistant host restart may delay a completion
+until the App starts; overdue jobs fire immediately on startup.
 
 ## Development
 

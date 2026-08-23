@@ -5,6 +5,7 @@ from typing import Any
 from app.config import Settings
 from app.mcp_broker import ToolBinding
 from app.realtime import ConversationHistory, RealtimeSession, ToolRecord
+from app.timers import TimerManager
 
 
 class SlowBroker:
@@ -201,3 +202,46 @@ async def test_tool_calls_are_limited_to_four_and_correlated() -> None:
     ]
     assert broker.max_active == 4
     assert set(outputs) == {f"call-{index}" for index in range(8)}
+
+
+async def test_timer_tools_are_advertised_and_executed_locally(tmp_path) -> None:
+    binding = ToolBinding(
+        public_name="unused",
+        server_name="unused",
+        remote_name="unused",
+        description="unused",
+        schema={"type": "object", "properties": {}},
+    )
+    broker = MutableBroker(binding)
+    timers = TimerManager(tmp_path / "timers.json")
+    await timers.start()
+    session = RealtimeSession(
+        None,  # type: ignore[arg-type]
+        Settings(openai_api_key="test"),
+        broker,  # type: ignore[arg-type]
+        noop_audio,
+        noop_event,
+        "client-a",
+        timers,
+    )
+    websocket = RecordingWebSocket()
+    session.ws = websocket  # type: ignore[assignment]
+    session._connected.set()
+    session.begin_turn()
+
+    definition_names = {tool["name"] for tool in session._session_update({})["session"]["tools"]}
+    assert "voice_timer_create" in definition_names
+    assert "voice_alarm_create" in definition_names
+    await session._call_tool(
+        {
+            "name": "voice_timer_create",
+            "call_id": "timer-call",
+            "arguments": '{"duration_seconds":60,"label":"Tea"}',
+        }
+    )
+
+    output = json.loads(websocket.events[0]["item"]["output"])
+    assert output["label"] == "Tea"
+    assert timers.list("client-a")[0]["label"] == "Tea"
+    assert broker.called == []
+    await timers.close()

@@ -23,6 +23,7 @@ from app.rate_limit import RateLimiter
 from app.realtime import RealtimeSession
 from app.routes import OutputRoute, RouteStore
 from app.speakers import SpeakerController
+from app.timers import TimerManager
 
 LOGGER = logging.getLogger(__name__)
 WEB_ROOT = Path(__file__).parent / "web"
@@ -51,6 +52,7 @@ class VoiceServer:
         self.idle_expirations = 0
         self.session_rate = RateLimiter(settings.session_rate_limit_per_minute)
         self.media_rate = RateLimiter(settings.media_rate_limit_per_minute)
+        self.timers = TimerManager(settings.timers_path)
         self.http = None
         self.speakers = None
 
@@ -60,11 +62,13 @@ class VoiceServer:
         self.http = aiohttp.ClientSession()
         token = os.getenv("SUPERVISOR_TOKEN", "")
         self.speakers = SpeakerController(self.http, self.settings.ha_api_url, token)
+        await self.timers.start()
         await self.broker.start()
 
     async def stop(self, app: web.Application) -> None:
         await asyncio.gather(*(session.close() for session in tuple(self.sessions)))
         await self.broker.close()
+        await self.timers.close()
         if self.http:
             await self.http.close()
 
@@ -165,22 +169,36 @@ class VoiceServer:
                     and (current.mode == "buffered" or progressive_failed)
                     and pcm
                 ):
-                    encoded = await encode_mp3(bytes(pcm))
+                    raw_audio = bytes(pcm)
+                    encoded = await encode_mp3(raw_audio)
                     pcm.clear()
                     token, item = self.media.create()
                     self.media.append(item, encoded)
                     self.media.finish(item)
-                    result = await self._play(current, request, token)
-                    await ws.send_json(
-                        {
-                            "type": "playback_status",
-                            "mode": "buffered",
-                            "ok": True,
-                            "fallback_used": progressive_failed,
-                            "request_latency_ms": result.request_latency_ms,
-                            "replaced_active_playback": result.replaced_active_playback,
-                        }
-                    )
+                    try:
+                        result = await self._play(current, request, token)
+                        await ws.send_json(
+                            {
+                                "type": "playback_status",
+                                "mode": "buffered",
+                                "ok": True,
+                                "fallback_used": progressive_failed,
+                                "request_latency_ms": result.request_latency_ms,
+                                "replaced_active_playback": result.replaced_active_playback,
+                            }
+                        )
+                    except Exception as err:
+                        LOGGER.warning("Speaker playback failed: %s", type(err).__name__)
+                        await ws.send_bytes(raw_audio)
+                        await ws.send_json(
+                            {
+                                "type": "playback_status",
+                                "mode": "browser",
+                                "ok": True,
+                                "fallback_used": True,
+                                "error": {"type": type(err).__name__},
+                            }
+                        )
                     progressive_failed = False
                 elif progressive:
                     await progressive.finish()
@@ -206,8 +224,15 @@ class VoiceServer:
 
         assert self.http
         realtime = RealtimeSession(
-            self.http, self.settings, self.broker, on_audio, on_event, hello.client_id
+            self.http,
+            self.settings,
+            self.broker,
+            on_audio,
+            on_event,
+            hello.client_id,
+            self.timers,
         )
+        timer_callback = realtime.announce_timer
         self.sessions.add(realtime)
         try:
             await realtime.start()
@@ -220,6 +245,7 @@ class VoiceServer:
                     "diagnostics": self._diagnostics(realtime),
                 }
             )
+            self.timers.register(hello.client_id, timer_callback)
             while not ws.closed:
                 remaining = self.settings.idle_timeout_seconds - (
                     time.monotonic() - realtime.last_activity
@@ -323,6 +349,7 @@ class VoiceServer:
                     }
                 )
         finally:
+            self.timers.unregister(hello.client_id, timer_callback)
             await cancel_progressive()
             await realtime.close()
             self.sessions.discard(realtime)
