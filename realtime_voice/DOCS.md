@@ -10,6 +10,12 @@ The minimum setup is an OpenAI API key plus Home Assistant's official MCP Server
 integration. The App automatically authenticates to Home Assistant with its
 Supervisor token.
 
+OAuth-protected remote MCP servers should be added with Home Assistant's built-in
+**Model Context Protocol** integration and Application Credentials. The App discovers
+those registered MCP APIs and uses HA's internal MCP endpoints; OAuth access/refresh
+tokens remain exclusively in Home Assistant config entries. **Refresh tools** picks up
+entries added or removed after App startup.
+
 The **MCP tools** panel in the Web UI reports connection and schema health without
 showing server URLs, headers, or credentials. Optional servers reconnect automatically
 with bounded backoff and can be retried immediately with **Refresh tools**. Catalog

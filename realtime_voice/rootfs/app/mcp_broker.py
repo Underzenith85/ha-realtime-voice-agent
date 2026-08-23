@@ -359,7 +359,11 @@ class McpBroker:
                     continue
                 for tool in connection.tools:
                     allowed = connection.config.allowed_tools
-                    if name != "homeassistant" and not allowed:
+                    if (
+                        name != "homeassistant"
+                        and not connection.config.expose_all_tools
+                        and not allowed
+                    ):
                         continue
                     if allowed and tool.name not in allowed:
                         continue
@@ -469,3 +473,20 @@ class McpBroker:
             "tool_count": len(self.bindings),
             "servers": [connection.health.public() for connection in self.connections.values()],
         }
+
+    async def reconcile_managed(self, configs: tuple[McpServerConfig, ...]) -> None:
+        """Add/remove HA-managed MCP APIs after OAuth entries change."""
+        desired = {config.name: config for config in configs}
+        existing = {
+            name: connection
+            for name, connection in self.connections.items()
+            if connection.config.managed_by_home_assistant
+        }
+        for name in existing.keys() - desired.keys():
+            connection = self.connections.pop(name)
+            await connection.close()
+        for name in desired.keys() - existing.keys():
+            connection = McpConnection(desired[name], self._rebuild_catalog)
+            self.connections[name] = connection
+            await connection.start()
+        await self._rebuild_catalog()
