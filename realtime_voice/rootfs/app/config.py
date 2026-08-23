@@ -50,6 +50,36 @@ class McpServerConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class HardwareClientConfig:
+    client_id: str
+    name: str
+    token_sha256: str
+    entity_id: str | None = None
+    mode: str = "buffered"
+    announce: bool = True
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> HardwareClientConfig:
+        client_id = str(raw["client_id"]).strip()
+        if not client_id or len(client_id) > 128:
+            raise ValueError("hardware client client_id must contain 1-128 characters")
+        digest = str(raw["token_sha256"]).lower()
+        if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+            raise ValueError("hardware client token_sha256 must be a SHA-256 hex digest")
+        mode = str(raw.get("mode", "buffered"))
+        if mode not in {"buffered", "progressive"}:
+            raise ValueError("hardware client mode must be buffered or progressive")
+        return cls(
+            client_id=client_id,
+            name=str(raw.get("name", client_id))[:80],
+            token_sha256=digest,
+            entity_id=raw.get("entity_id"),
+            mode=mode,
+            announce=bool(raw.get("announce", True)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Settings:
     openai_api_key: str
     model: str = DEFAULT_MODEL
@@ -71,6 +101,7 @@ class Settings:
     tool_rate_limit_per_minute: int = 60
     shared_tool_concurrency: int = 16
     mcp_servers: tuple[McpServerConfig, ...] = ()
+    hardware_clients: tuple[HardwareClientConfig, ...] = ()
 
     @classmethod
     def load(cls, path: str | Path = "/data/options.json") -> Settings:
@@ -90,6 +121,15 @@ class Settings:
                     expose_all_tools=True,
                 ),
             )
+        hardware_clients = tuple(
+            HardwareClientConfig.from_dict(item) for item in raw.get("hardware_clients", [])
+        )
+        client_ids = [client.client_id for client in hardware_clients]
+        if len(client_ids) != len(set(client_ids)):
+            raise ValueError("hardware client IDs must be unique")
+        if len({client.token_sha256 for client in hardware_clients}) != len(hardware_clients):
+            raise ValueError("hardware client credentials must be unique")
+
         return cls(
             openai_api_key=api_key,
             model=raw.get("model", DEFAULT_MODEL),
@@ -109,4 +149,5 @@ class Settings:
             tool_rate_limit_per_minute=int(raw.get("tool_rate_limit_per_minute", 60)),
             shared_tool_concurrency=int(raw.get("shared_tool_concurrency", 16)),
             mcp_servers=tuple(servers),
+            hardware_clients=hardware_clients,
         )

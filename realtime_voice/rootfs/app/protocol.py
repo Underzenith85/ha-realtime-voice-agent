@@ -17,6 +17,7 @@ class ProtocolError(ValueError):
 class Hello:
     client_id: str
     name: str
+    client_type: str = "browser"
 
 
 def parse_hello(message: dict[str, Any]) -> Hello:
@@ -27,4 +28,11 @@ def parse_hello(message: dict[str, Any]) -> Hello:
     client_id = str(message.get("client_id", "")).strip()
     if not client_id or len(client_id) > 128:
         raise ProtocolError("invalid client_id")
-    return Hello(client_id=client_id, name=str(message.get("name", "Browser"))[:80])
+    client_type = str(message.get("client_type", "browser"))
+    if client_type not in {"browser", "voice_pe"}:
+        raise ProtocolError("unsupported client type")
+    return Hello(
+        client_id=client_id,
+        name=str(message.get("name", "Browser"))[:80],
+        client_type=client_type,
+    )

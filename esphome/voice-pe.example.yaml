@@ -1,0 +1,37 @@
+# Merge this component into an ESPHome configuration based on the official Voice PE
+# hardware package. See docs/voice-pe.md for the required stock-pipeline removals and
+# the complete provisioning procedure.
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [realtime_voice_client]
+
+realtime_voice_client:
+  id: realtime_voice
+  url: !secret realtime_voice_ws_url
+  token: !secret realtime_voice_device_token
+  client_id: kitchen-voice-pe
+  name: Kitchen Voice PE
+  microphone:
+    microphone: i2s_mics
+    channels: 0
+    bits_per_sample: 16
+    gain_factor: 4
+  speaker: announcement_resampling_speaker
+
+# Wake detection starts capture. The component ends the turn after detected speech is
+# followed by 900 ms of silence (with a 15-second safety limit). The center button
+# cancels an active turn or starts a new one.
+micro_wake_word:
+  on_wake_word_detected:
+    - lambda: id(realtime_voice).start_turn();
+
+binary_sensor:
+  - id: !extend center_button
+    on_press:
+      - lambda: |-
+          if (id(realtime_voice).is_listening())
+            id(realtime_voice).cancel();
+          else
+            id(realtime_voice).start_turn();

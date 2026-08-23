@@ -11,6 +11,7 @@ as an App container, which is required for the long-lived Realtime, MCP, and aud
 ## Current capabilities
 
 - Push-to-talk browser client behind Home Assistant ingress.
+- Authenticated Home Assistant Voice PE developer client using the same PCM protocol.
 - Independent concurrent Realtime sessions.
 - Home Assistant control through the official MCP Server integration.
 - Additional Streamable HTTP and legacy SSE MCP servers with bearer/custom headers.
@@ -144,6 +145,13 @@ reports first-response latency and structured errors, and supports accessible Sp
 push-to-talk. Output routes can be tested before saving. Explicit cancel and conversation
 reset controls are available, and network/sleep reconnects are guarded against duplicate
 sessions and capture resources.
+
+## Voice PE developer client
+
+An ESPHome reference component can connect Voice PE directly to the App without a
+browser. Each unit uses a revocable device credential and can retain a default room or
+speaker route. See the [Voice PE developer guide](docs/voice-pe.md) before flashing;
+physical audio, LED, OTA, and rollback validation remains tracked in issue #10.
 
 ## Timers and alarms
 
