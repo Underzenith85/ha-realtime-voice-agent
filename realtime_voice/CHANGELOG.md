@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.1
+
+- Register the Voice PE WebSocket dependency as an ESP-IDF managed component so the
+  reference firmware compiles with ESPHome 2026.8.0 and ESP-IDF 5.5.5.
+- Compile an ESP32-S3 microphone/resampling-speaker fixture in CI to catch ESPHome
+  schema, code generation, managed-component, and C++ API regressions.
+
 ## 0.10.0
 
 - Add an authenticated direct WebSocket endpoint for individually provisioned hardware
