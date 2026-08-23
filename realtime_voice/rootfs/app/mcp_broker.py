@@ -52,7 +52,10 @@ class McpConnection:
             streams = await stack.enter_async_context(
                 streamablehttp_client(self.config.url, headers=self.config.headers)
             )
-        session = await stack.enter_async_context(ClientSession(*streams))
+        # streamablehttp_client returns a third session-id callback in newer MCP
+        # releases. ClientSession's third positional argument is instead the read
+        # timeout, so only pass the read and write streams here.
+        session = await stack.enter_async_context(ClientSession(streams[0], streams[1]))
         await session.initialize()
         self._stack = stack
         self.session = session
