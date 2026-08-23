@@ -47,13 +47,35 @@ jobs:
         run: uv sync --locked
 
       - name: Run tests
-        run: uv run pytest -q
+        run: uv run pytest -q -m "not integration"
 
       - name: Run Ruff lint
         run: uv run ruff check .
 
       - name: Check Ruff formatting
         run: uv run ruff format --check .
+
+  integration:
+    name: Integration harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: Run fake-service integration tests
+        run: uv run pytest -q -m integration
 
   addon-build:
     name: Add-on build

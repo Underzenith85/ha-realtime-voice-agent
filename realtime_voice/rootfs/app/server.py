@@ -36,7 +36,7 @@ async def ingress_or_media_only(request: web.Request, handler: Any) -> web.Strea
 class VoiceServer:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.routes = RouteStore("/data/routes.json")
+        self.routes = RouteStore(settings.routes_path)
         self.routes.load()
         self.media = MediaStore()
         self.broker = McpBroker(settings.mcp_servers)
@@ -49,7 +49,7 @@ class VoiceServer:
 
         self.http = aiohttp.ClientSession()
         token = os.getenv("SUPERVISOR_TOKEN", "")
-        self.speakers = SpeakerController(self.http, "http://supervisor/core", token)
+        self.speakers = SpeakerController(self.http, self.settings.ha_api_url, token)
         await self.broker.start()
 
     async def stop(self, app: web.Application) -> None:

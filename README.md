@@ -106,9 +106,15 @@ Assist tool set is controlled by HA's exposed-entity configuration.
 
 ```bash
 uv sync
-uv run pytest
+uv run pytest -m "not integration"
+uv run pytest -m integration
 uv run ruff check .
 ```
+
+The integration suite starts local fake OpenAI Realtime, Streamable HTTP/SSE MCP, and
+Home Assistant API services. It exercises browser and speaker routes, concurrent clients,
+tool calls, cancellation, reconnects, and media delivery without paid API access or HA
+hardware.
 
 The App requires `ffmpeg` at runtime for generic speaker output; it is included in the
 App image.

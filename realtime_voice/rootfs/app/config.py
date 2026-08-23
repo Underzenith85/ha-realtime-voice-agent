@@ -14,6 +14,8 @@ DEFAULT_INSTRUCTIONS = "You are a concise Home Assistant voice agent."
 DEFAULT_MAX_SESSIONS = 4
 DEFAULT_IDLE_TIMEOUT = 600
 DEFAULT_HA_MCP_URL = "http://supervisor/core/api/mcp/assist"
+DEFAULT_HA_API_URL = "http://supervisor/core"
+DEFAULT_OPENAI_REALTIME_URL = "https://api.openai.com/v1/realtime"
 DEFAULT_SPEAKER_BASE_URL = "http://homeassistant.local:8099"
 
 
@@ -50,7 +52,11 @@ class Settings:
     max_sessions: int = DEFAULT_MAX_SESSIONS
     idle_timeout_seconds: int = DEFAULT_IDLE_TIMEOUT
     ha_mcp_url: str = DEFAULT_HA_MCP_URL
+    ha_api_url: str = DEFAULT_HA_API_URL
+    openai_realtime_url: str = DEFAULT_OPENAI_REALTIME_URL
     speaker_base_url: str = DEFAULT_SPEAKER_BASE_URL
+    routes_path: str = "/data/routes.json"
+    tool_timeout_seconds: float = 30
     mcp_servers: tuple[McpServerConfig, ...] = ()
 
     @classmethod
