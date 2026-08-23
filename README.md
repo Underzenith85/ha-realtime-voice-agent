@@ -86,6 +86,9 @@ playback. Buffered playback is the compatibility-first option. Progressive playb
 lower perceived latency but depends on the player integration accepting a growing MP3
 stream. Browser playback requires no direct port exposure.
 
+See the [speaker compatibility matrix](docs/speaker-compatibility.md) for adaptive
+fallback, latest-response-wins behavior, and the remaining physical-device checks.
+
 ## Additional MCP servers
 
 Each server entry has this shape:

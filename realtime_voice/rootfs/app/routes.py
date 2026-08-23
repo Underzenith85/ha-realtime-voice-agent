@@ -14,6 +14,7 @@ class OutputRoute:
     mode: str = "buffered"
     announce: bool = True
     volume: float | None = None
+    progressive_fallback: bool = True
 
     def validate(self) -> OutputRoute:
         if self.sink not in {"browser", "media_player"}:

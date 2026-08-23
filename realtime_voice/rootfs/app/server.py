@@ -90,9 +90,22 @@ class VoiceServer:
         progressive: ProgressiveMp3Encoder | None = None
         progressive_item: MediaObject | None = None
         progressive_reader: asyncio.Task[None] | None = None
+        progressive_failed = False
+
+        async def cancel_progressive() -> None:
+            nonlocal progressive, progressive_item, progressive_reader
+            if progressive:
+                await progressive.cancel()
+            if progressive_reader:
+                progressive_reader.cancel()
+                with suppress(asyncio.CancelledError):
+                    await progressive_reader
+            progressive = None
+            progressive_item = None
+            progressive_reader = None
 
         async def on_audio(chunk: bytes) -> None:
-            nonlocal progressive, progressive_item, progressive_reader
+            nonlocal progressive, progressive_item, progressive_reader, progressive_failed
             current = self.routes.get(hello.client_id)
             if current.sink == "browser":
                 await ws.send_bytes(chunk)
@@ -100,32 +113,75 @@ class VoiceServer:
             if current.mode == "buffered":
                 pcm.extend(chunk)
                 return
+            pcm.extend(chunk)
+            if progressive_failed:
+                return
             if progressive is None:
                 progressive = ProgressiveMp3Encoder()
                 await progressive.start()
                 token, progressive_item = self.media.create()
+                active_encoder = progressive
+                active_item = progressive_item
 
                 async def pump() -> None:
-                    assert progressive and progressive_item
-                    async for encoded in progressive.chunks():
-                        self.media.append(progressive_item, encoded)
-                    self.media.finish(progressive_item)
+                    async for encoded in active_encoder.chunks():
+                        self.media.append(active_item, encoded)
+                    self.media.finish(active_item)
 
                 progressive_reader = asyncio.create_task(pump())
-                await self._play(current, request, token)
+                try:
+                    result = await self._play(current, request, token)
+                    await ws.send_json(
+                        {
+                            "type": "playback_status",
+                            "mode": "progressive",
+                            "request_latency_ms": result.request_latency_ms,
+                            "replaced_active_playback": result.replaced_active_playback,
+                        }
+                    )
+                except Exception as err:
+                    await cancel_progressive()
+                    if not current.progressive_fallback:
+                        raise
+                    progressive_failed = True
+                    await ws.send_json(
+                        {
+                            "type": "playback_status",
+                            "mode": "progressive",
+                            "ok": False,
+                            "fallback": "buffered",
+                            "error": {"type": type(err).__name__},
+                        }
+                    )
+                    return
             await progressive.write(chunk)
 
         async def on_event(event: dict[str, Any]) -> None:
-            nonlocal progressive, progressive_item, progressive_reader
+            nonlocal progressive, progressive_item, progressive_reader, progressive_failed
             if event["type"] == "response.output_audio.done":
                 current = self.routes.get(hello.client_id)
-                if current.sink == "media_player" and current.mode == "buffered" and pcm:
+                if (
+                    current.sink == "media_player"
+                    and (current.mode == "buffered" or progressive_failed)
+                    and pcm
+                ):
                     encoded = await encode_mp3(bytes(pcm))
                     pcm.clear()
                     token, item = self.media.create()
                     self.media.append(item, encoded)
                     self.media.finish(item)
-                    await self._play(current, request, token)
+                    result = await self._play(current, request, token)
+                    await ws.send_json(
+                        {
+                            "type": "playback_status",
+                            "mode": "buffered",
+                            "ok": True,
+                            "fallback_used": progressive_failed,
+                            "request_latency_ms": result.request_latency_ms,
+                            "replaced_active_playback": result.replaced_active_playback,
+                        }
+                    )
+                    progressive_failed = False
                 elif progressive:
                     await progressive.finish()
                     if progressive_reader:
@@ -133,6 +189,7 @@ class VoiceServer:
                     progressive = None
                     progressive_item = None
                     progressive_reader = None
+                    pcm.clear()
             safe = {
                 key: event[key]
                 for key in ("type", "delta", "transcript", "reconnects", "name", "call_id")
@@ -189,6 +246,9 @@ class VoiceServer:
                 event = json.loads(message.data)
                 realtime.touch()
                 if event.get("type") == "ptt_start":
+                    await cancel_progressive()
+                    progressive_failed = False
+                    pcm.clear()
                     await realtime.sync_tools()
                     was_responding = realtime.response_active
                     await realtime.cancel()
@@ -211,13 +271,21 @@ class VoiceServer:
                             token, item = self.media.create()
                             self.media.append(item, encoded)
                             self.media.finish(item)
-                            await self._play(candidate, request, token)
+                            playback = await self._play(candidate, request, token)
+                        else:
+                            playback = None
                         await ws.send_json(
                             {
                                 "type": "route_test_result",
                                 "ok": True,
                                 "route": asdict(candidate),
                                 "message": "Playback request accepted",
+                                "request_latency_ms": (
+                                    playback.request_latency_ms if playback else 0
+                                ),
+                                "replaced_active_playback": (
+                                    playback.replaced_active_playback if playback else False
+                                ),
                             }
                         )
                     except Exception as err:
@@ -255,12 +323,7 @@ class VoiceServer:
                     }
                 )
         finally:
-            if progressive:
-                await progressive.cancel()
-            if progressive_reader:
-                progressive_reader.cancel()
-                with suppress(asyncio.CancelledError):
-                    await progressive_reader
+            await cancel_progressive()
             await realtime.close()
             self.sessions.discard(realtime)
             await ws.close()
@@ -275,10 +338,10 @@ class VoiceServer:
             "session": current.diagnostics(),
         }
 
-    async def _play(self, route: OutputRoute, request: web.Request, token: str) -> None:
+    async def _play(self, route: OutputRoute, request: web.Request, token: str):
         assert self.speakers
         url = f"{self.settings.speaker_base_url.rstrip('/')}/media/{token}"
-        await self.speakers.play(route, url)
+        return await self.speakers.play(route, url)
 
     async def media_stream(self, request: web.Request) -> web.StreamResponse:
         peer = request.remote or "unknown"
