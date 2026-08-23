@@ -1,0 +1,95 @@
+name: Publish release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: SemVer from realtime_voice/config.yaml (without v)
+        required: true
+        type: string
+      confirmation:
+        description: Type PUBLISH after completing docs/haos-acceptance.md
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  issues: read
+
+jobs:
+  gate:
+    name: Release acceptance gate
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - name: Check out release commit
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate release intent and metadata
+        run: |
+          test "$RELEASE_CONFIRMATION" = PUBLISH
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          import yaml
+
+          version = os.environ["RELEASE_VERSION"]
+          if re.fullmatch(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)", version) is None:
+              raise SystemExit("version must be canonical SemVer without a v prefix")
+          manifest = yaml.safe_load(Path("realtime_voice/config.yaml").read_text())
+          if manifest["version"] != version:
+              raise SystemExit("requested version does not match App manifest")
+          if f"## {version}" not in Path("realtime_voice/CHANGELOG.md").read_text():
+              raise SystemExit("requested version has no changelog section")
+          PY
+          test -z "$(git tag --list "v$RELEASE_VERSION")"
+
+      - name: Require completed native acceptance issues
+        run: |
+          for issue in 2 5 8; do
+            test "$(gh issue view "$issue" --json state --jq .state)" = CLOSED
+          done
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Install Python and locked dependencies
+        run: |
+          uv python install 3.12
+          uv sync --locked
+
+      - name: Run quality and integration gates
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run pytest -q
+
+      - name: Validate Home Assistant App configuration
+        uses: frenck/action-addon-linter@v2.21.0
+        with:
+          path: "./realtime_voice"
+
+      - name: Build release image
+        run: >-
+          docker build
+          --build-arg BUILD_ARCH=amd64
+          --build-arg BUILD_VERSION="$RELEASE_VERSION"
+          realtime_voice
+
+      - name: Publish immutable tag and GitHub release
+        run: >-
+          gh release create "v$RELEASE_VERSION"
+          --target "$GITHUB_SHA"
+          --title "Realtime Voice Agent v$RELEASE_VERSION"
+          --generate-notes

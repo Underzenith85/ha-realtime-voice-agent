@@ -183,6 +183,8 @@ Before a tagged release, run and attach the redacted evidence from the
 replace the fresh-install, live MCP boundary, browser microphone, and physical-speaker
 checks.
 
+Maintainers publish tags only through the guarded [release procedure](docs/releasing.md).
+
 The App requires `ffmpeg` at runtime for generic speaker output; it is included in the
 App image.
 
