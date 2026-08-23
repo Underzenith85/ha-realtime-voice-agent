@@ -122,7 +122,12 @@ class VoiceServer:
         try:
             await realtime.start()
             await ws.send_json(
-                {"type": "session_ready", "client_id": hello.client_id, "route": asdict(route)}
+                {
+                    "type": "session_ready",
+                    "client_id": hello.client_id,
+                    "route": asdict(route),
+                    "mcp": self.broker.status(),
+                }
             )
             async for message in ws:
                 if message.type == WSMsgType.BINARY:
@@ -132,6 +137,7 @@ class VoiceServer:
                     continue
                 event = json.loads(message.data)
                 if event.get("type") == "ptt_start":
+                    await realtime.sync_tools()
                     was_responding = realtime.response_active
                     await realtime.cancel()
                     if was_responding and route.entity_id and self.speakers:
@@ -148,6 +154,10 @@ class VoiceServer:
                     await ws.send_json(
                         {"type": "speakers", "items": await self.speakers.list_speakers()}
                     )
+                elif event.get("type") == "tools_refresh":
+                    await self.broker.refresh()
+                    await realtime.sync_tools()
+                    await ws.send_json({"type": "mcp_status", "mcp": self.broker.status()})
         finally:
             await realtime.close()
             self.sessions.discard(realtime)

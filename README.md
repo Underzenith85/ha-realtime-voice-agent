@@ -102,6 +102,14 @@ allowed_tools:
 An empty external `allowed_tools` list exposes no tools. Home Assistant's own curated
 Assist tool set is controlled by HA's exposed-entity configuration.
 
+MCP connections are monitored and reconnect with bounded exponential backoff. An
+unavailable optional server does not prevent Home Assistant tools from starting. The
+browser's **MCP tools** panel shows credential-free health and schema diagnostics and can
+refresh the catalog explicitly. Active Realtime sessions receive changed tools before
+their next push-to-talk turn. If Home Assistant's `/api/mcp/assist` endpoint returns a
+confirmed 404, the App retries the configured base `/api/mcp` endpoint; authentication
+and other failures do not trigger that fallback.
+
 ## Development
 
 ```bash

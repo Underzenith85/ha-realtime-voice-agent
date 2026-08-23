@@ -6,6 +6,9 @@ const speaker = document.querySelector("#speaker");
 const mode = document.querySelector("#mode");
 const announce = document.querySelector("#announce");
 const saveRoute = document.querySelector("#saveRoute");
+const refreshTools = document.querySelector("#refreshTools");
+const catalogSummary = document.querySelector("#catalogSummary");
+const mcpServers = document.querySelector("#mcpServers");
 
 function createClientId() {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -39,6 +42,20 @@ function setRoute(route) {
   speaker.disabled = !remote;
   mode.disabled = !remote;
   announce.disabled = !remote;
+}
+
+function setMcpStatus(mcp) {
+  catalogSummary.textContent = `Catalog v${mcp.catalog_version}: ${mcp.tool_count} tools`;
+  mcpServers.replaceChildren(...mcp.servers.map(server => {
+    const item = document.createElement("li");
+    const details = [server.status];
+    if (server.fallback_active) details.push("fallback endpoint");
+    if (server.last_error) details.push(server.last_error);
+    if (server.schema_errors.length) details.push(`${server.schema_errors.length} schema errors`);
+    item.textContent = `${server.name}: ${details.join(" · ")}`;
+    if (server.status !== "connected" || server.schema_errors.length) item.className = "mcp-error";
+    return item;
+  }));
 }
 
 async function playPcm(buffer) {
@@ -86,16 +103,22 @@ async function connect() {
       const microphoneAvailable = window.isSecureContext && navigator.mediaDevices?.getUserMedia;
       ptt.disabled = !microphoneAvailable;
       saveRoute.disabled = false;
+      refreshTools.disabled = false;
       transcript.textContent = microphoneAvailable
         ? "Hold the button and speak."
         : "Microphone access requires HTTPS (or localhost).";
       setRoute(message.route);
+      setMcpStatus(message.mcp);
       socket.send(JSON.stringify({ type: "speakers_list" }));
     } else if (message.type === "speakers") {
       speaker.replaceChildren(...message.items.map(item => new Option(item.name, item.entity_id)));
     } else if (message.type === "route") {
       saveRoute.textContent = "Route saved";
       setTimeout(() => { saveRoute.textContent = "Save output route"; }, 1500);
+    } else if (message.type === "mcp_status") {
+      setMcpStatus(message.mcp);
+      refreshTools.disabled = false;
+      refreshTools.textContent = "Refresh tools";
     } else if (message.type === "response.output_audio_transcript.delta") {
       transcript.textContent += message.delta;
     } else if (message.type === "response.done") {
@@ -106,6 +129,7 @@ async function connect() {
     statusEl.textContent = "Disconnected";
     statusEl.classList.remove("ready");
     ptt.disabled = true;
+    refreshTools.disabled = true;
     setTimeout(connect, 2000);
   };
 }
@@ -136,6 +160,12 @@ saveRoute.addEventListener("click", () => {
     type: "route_set",
     route: { sink: sink.value, entity_id: sink.value === "media_player" ? speaker.value : null, mode: mode.value, announce: announce.checked, volume: null },
   }));
+});
+
+refreshTools.addEventListener("click", () => {
+  refreshTools.disabled = true;
+  refreshTools.textContent = "Refreshing…";
+  socket.send(JSON.stringify({ type: "tools_refresh" }));
 });
 
 connect();

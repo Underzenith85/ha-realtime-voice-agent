@@ -10,5 +10,10 @@ The minimum setup is an OpenAI API key plus Home Assistant's official MCP Server
 integration. The App automatically authenticates to Home Assistant with its
 Supervisor token.
 
+The **MCP tools** panel in the Web UI reports connection and schema health without
+showing server URLs, headers, or credentials. Optional servers reconnect automatically
+with bounded backoff and can be retried immediately with **Refresh tools**. Catalog
+changes are applied to an active voice session before its next turn.
+
 For generic speakers, publish port 8099 only to the trusted LAN and set
 `speaker_base_url` to the exact address those devices use to reach the add-on.

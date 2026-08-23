@@ -106,7 +106,9 @@ async def run_aiohttp_app(app: web.Application) -> AsyncIterator[TestServer]:
 
 
 @asynccontextmanager
-async def run_mcp_server(transport: str = "streamable_http") -> AsyncIterator[str]:
+async def run_mcp_server(
+    transport: str = "streamable_http",
+) -> AsyncIterator[McpTestServer]:
     mcp = FastMCP("Fake Home Assistant", stateless_http=True, json_response=True)
 
     @mcp.tool()
@@ -131,7 +133,7 @@ async def run_mcp_server(transport: str = "streamable_http") -> AsyncIterator[st
             await task
         await asyncio.sleep(0)
     try:
-        yield f"http://127.0.0.1:{port}{path}"
+        yield McpTestServer(f"http://127.0.0.1:{port}{path}", mcp)
     finally:
         server.should_exit = True
         await task
@@ -179,6 +181,12 @@ class FakeProgressiveEncoder:
         await self.queue.put(None)
 
 
+@dataclass(frozen=True)
+class McpTestServer:
+    url: str
+    mcp: FastMCP
+
+
 @pytest.mark.asyncio
 async def test_complete_browser_and_mcp_assisted_speaker_turns(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
@@ -195,11 +203,15 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
     monkeypatch.setattr("app.server.encode_mp3", fake_encode)
     monkeypatch.setattr("app.server.ProgressiveMp3Encoder", FakeProgressiveEncoder)
     monkeypatch.setenv("SUPERVISOR_TOKEN", "supervisor-token")
+    unavailable_socket = socket.socket()
+    unavailable_socket.bind(("127.0.0.1", 0))
+    unavailable_port = unavailable_socket.getsockname()[1]
+    unavailable_socket.close()
 
     async with (
         run_aiohttp_app(external) as external_server,
-        run_mcp_server() as mcp_url,
-        run_mcp_server("sse") as sse_url,
+        run_mcp_server() as mcp_server,
+        run_mcp_server("sse") as sse_server,
     ):
         base_url = str(external_server.make_url("")).rstrip("/")
         settings = Settings(
@@ -209,18 +221,35 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
             speaker_base_url="http://voice.test:8099",
             routes_path=str(tmp_path / "routes.json"),
             mcp_servers=(
-                McpServerConfig(name="homeassistant", url=mcp_url),
+                McpServerConfig(name="homeassistant", url=mcp_server.url),
                 McpServerConfig(
                     name="legacy",
-                    url=sse_url,
+                    url=sse_server.url,
                     transport="sse",
                     allowed_tools=frozenset({"get_light"}),
+                ),
+                McpServerConfig(
+                    name="offline",
+                    url=f"http://127.0.0.1:{unavailable_port}/mcp",
+                    allowed_tools=frozenset({"missing"}),
                 ),
             ),
         )
         voice_app = create_app(settings)
         async with TestClient(TestServer(voice_app)) as client:
+            status = voice_app["voice"].broker.status()
+            assert status["tool_count"] == 2
+            assert (
+                next(server for server in status["servers"] if server["name"] == "offline")[
+                    "status"
+                ]
+                == "unavailable"
+            )
             browser = await start_voice_client(client, "browser-client")
+            await browser.send_json({"type": "tools_refresh"})
+            refreshed = await receive_type(browser, "mcp_status")
+            assert refreshed["mcp"]["tool_count"] == 2
+            assert refreshed["mcp"]["catalog_version"] >= 1
             await browser.send_json({"type": "ptt_start"})
             await browser.send_bytes(b"plain-turn")
             await browser.send_json({"type": "ptt_stop"})
@@ -274,6 +303,32 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
             assert tool_names == {
                 "mcp_homeassistant_get_light",
                 "mcp_legacy_get_light",
+            }
+
+            @mcp_server.mcp.tool()
+            def newly_added() -> str:
+                """A tool added while voice sessions are active."""
+                return "available"
+
+            await browser.send_json({"type": "tools_refresh"})
+            added_status = await receive_type(browser, "mcp_status")
+            assert added_status["mcp"]["tool_count"] == 3
+            latest_update = [
+                event for event in services.openai_events if event["type"] == "session.update"
+            ][-1]
+            assert "mcp_homeassistant_newly_added" in {
+                tool["name"] for tool in latest_update["session"]["tools"]
+            }
+
+            mcp_server.mcp.remove_tool("newly_added")
+            await browser.send_json({"type": "tools_refresh"})
+            removed_status = await receive_type(browser, "mcp_status")
+            assert removed_status["mcp"]["tool_count"] == 2
+            latest_update = [
+                event for event in services.openai_events if event["type"] == "session.update"
+            ][-1]
+            assert "mcp_homeassistant_newly_added" not in {
+                tool["name"] for tool in latest_update["session"]["tools"]
             }
 
             with pytest.raises(WSServerHandshakeError) as rejected:

@@ -13,7 +13,7 @@ from typing import Any
 import aiohttp
 
 from app.config import Settings
-from app.mcp_broker import McpBroker
+from app.mcp_broker import McpBroker, ToolBinding
 
 LOGGER = logging.getLogger(__name__)
 AudioCallback = Callable[[bytes], Awaitable[None]]
@@ -37,6 +37,8 @@ class RealtimeSession:
         self.ws: aiohttp.ClientWebSocketResponse | None = None
         self.reader: asyncio.Task[None] | None = None
         self.response_active = False
+        self.catalog_version = -1
+        self.tool_bindings: dict[str, ToolBinding] = {}
 
     async def start(self) -> None:
         self.ws = await self.http.ws_connect(
@@ -44,6 +46,13 @@ class RealtimeSession:
             headers={"Authorization": f"Bearer {self.settings.openai_api_key}"},
             heartbeat=20,
         )
+        await self.sync_tools(force=True)
+        self.reader = asyncio.create_task(self._read(), name="openai-realtime-reader")
+
+    async def sync_tools(self, *, force: bool = False) -> bool:
+        version, bindings = self.broker.snapshot()
+        if not force and version == self.catalog_version:
+            return False
         await self._send(
             {
                 "type": "session.update",
@@ -62,12 +71,14 @@ class RealtimeSession:
                             "voice": self.settings.voice,
                         },
                     },
-                    "tools": self.broker.realtime_tools(),
+                    "tools": [binding.realtime_definition() for binding in bindings.values()],
                     "tool_choice": "auto",
                 },
             }
         )
-        self.reader = asyncio.create_task(self._read(), name="openai-realtime-reader")
+        self.catalog_version = version
+        self.tool_bindings = bindings
+        return True
 
     async def append_audio(self, pcm: bytes) -> None:
         await self._send(
@@ -110,7 +121,8 @@ class RealtimeSession:
             elif event_type == "response.output_audio.delta":
                 await self.on_audio(base64.b64decode(event["delta"]))
             elif event_type == "response.function_call_arguments.done":
-                asyncio.create_task(self._call_tool(event))
+                binding = self.tool_bindings.get(event.get("name", ""))
+                asyncio.create_task(self._call_tool(event, binding))
             elif event_type in {
                 "response.output_audio.done",
                 "response.output_audio_transcript.delta",
@@ -121,12 +133,15 @@ class RealtimeSession:
                     self.response_active = False
                 await self.on_event(event)
 
-    async def _call_tool(self, event: dict[str, Any]) -> None:
+    async def _call_tool(self, event: dict[str, Any], binding: ToolBinding | None = None) -> None:
         call_id = event["call_id"]
         try:
             arguments = json.loads(event.get("arguments") or "{}")
+            binding = binding or self.tool_bindings.get(event["name"])
+            if binding is None:
+                raise KeyError("tool binding is no longer available")
             output = await asyncio.wait_for(
-                self.broker.call(event["name"], arguments),
+                self.broker.call_binding(binding, arguments),
                 timeout=self.settings.tool_timeout_seconds,
             )
         except Exception as err:  # returned to the model, not hidden in logs
