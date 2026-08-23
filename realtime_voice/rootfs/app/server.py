@@ -6,6 +6,8 @@ import asyncio
 import json
 import logging
 import os
+import time
+from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -41,6 +43,9 @@ class VoiceServer:
         self.media = MediaStore()
         self.broker = McpBroker(settings.mcp_servers)
         self.sessions: set[RealtimeSession] = set()
+        self._session_lock = asyncio.Lock()
+        self._session_count = 0
+        self.idle_expirations = 0
         self.http = None
         self.speakers = None
 
@@ -59,12 +64,19 @@ class VoiceServer:
             await self.http.close()
 
     async def websocket(self, request: web.Request) -> web.WebSocketResponse:
-        if len(self.sessions) >= self.settings.max_sessions:
-            raise web.HTTPServiceUnavailable(text="session limit reached")
+        async with self._session_lock:
+            if self._session_count >= self.settings.max_sessions:
+                raise web.HTTPServiceUnavailable(text="session limit reached")
+            self._session_count += 1
         ws = web.WebSocketResponse(heartbeat=20, max_msg_size=512 * 1024)
-        await ws.prepare(request)
-        first = await ws.receive_json()
-        hello = parse_hello(first)
+        try:
+            await ws.prepare(request)
+            first = await ws.receive_json()
+            hello = parse_hello(first)
+        except BaseException:
+            async with self._session_lock:
+                self._session_count -= 1
+            raise
         route = self.routes.get(hello.client_id)
         pcm = bytearray()
         progressive: ProgressiveMp3Encoder | None = None
@@ -113,11 +125,17 @@ class VoiceServer:
                     progressive = None
                     progressive_item = None
                     progressive_reader = None
-            safe = {key: event[key] for key in ("type", "delta") if key in event}
+            safe = {
+                key: event[key]
+                for key in ("type", "delta", "transcript", "reconnects")
+                if key in event
+            }
             await ws.send_json(safe)
 
         assert self.http
-        realtime = RealtimeSession(self.http, self.settings, self.broker, on_audio, on_event)
+        realtime = RealtimeSession(
+            self.http, self.settings, self.broker, on_audio, on_event, hello.client_id
+        )
         self.sessions.add(realtime)
         try:
             await realtime.start()
@@ -127,19 +145,39 @@ class VoiceServer:
                     "client_id": hello.client_id,
                     "route": asdict(route),
                     "mcp": self.broker.status(),
+                    "diagnostics": self._diagnostics(realtime),
                 }
             )
-            async for message in ws:
+            while not ws.closed:
+                remaining = self.settings.idle_timeout_seconds - (
+                    time.monotonic() - realtime.last_activity
+                )
+                if remaining <= 0:
+                    realtime.idle_expired = True
+                    self.idle_expirations += 1
+                    await ws.send_json({"type": "session.expired", "reason": "idle_timeout"})
+                    break
+                try:
+                    message = await asyncio.wait_for(ws.receive(), timeout=remaining)
+                except TimeoutError:
+                    realtime.idle_expired = True
+                    self.idle_expirations += 1
+                    await ws.send_json({"type": "session.expired", "reason": "idle_timeout"})
+                    break
+                if message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR}:
+                    break
                 if message.type == WSMsgType.BINARY:
                     await realtime.append_audio(message.data)
                     continue
                 if message.type != WSMsgType.TEXT:
                     continue
                 event = json.loads(message.data)
+                realtime.touch()
                 if event.get("type") == "ptt_start":
                     await realtime.sync_tools()
                     was_responding = realtime.response_active
                     await realtime.cancel()
+                    realtime.begin_turn()
                     if was_responding and route.entity_id and self.speakers:
                         await self.speakers.stop(route.entity_id)
                 elif event.get("type") == "ptt_stop":
@@ -158,11 +196,30 @@ class VoiceServer:
                     await self.broker.refresh()
                     await realtime.sync_tools()
                     await ws.send_json({"type": "mcp_status", "mcp": self.broker.status()})
+                elif event.get("type") == "diagnostics_get":
+                    await ws.send_json(
+                        {"type": "session_diagnostics", **self._diagnostics(realtime)}
+                    )
         finally:
+            if progressive:
+                await progressive.cancel()
+            if progressive_reader:
+                progressive_reader.cancel()
+                with suppress(asyncio.CancelledError):
+                    await progressive_reader
             await realtime.close()
             self.sessions.discard(realtime)
             await ws.close()
+            async with self._session_lock:
+                self._session_count -= 1
         return ws
+
+    def _diagnostics(self, current: RealtimeSession) -> dict[str, Any]:
+        return {
+            "session_count": self._session_count,
+            "idle_expirations": self.idle_expirations,
+            "session": current.diagnostics(),
+        }
 
     async def _play(self, route: OutputRoute, request: web.Request, token: str) -> None:
         assert self.speakers

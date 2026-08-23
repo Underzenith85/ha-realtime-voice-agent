@@ -18,6 +18,8 @@ as an App container, which is required for the long-lived Realtime, MCP, and aud
 - Browser playback or per-client HA speaker routing.
 - Compatible buffered MP3 announcements and experimental progressive MP3 playback.
 - Short-lived random media URLs; audio and transcripts are not persisted.
+- Automatic Realtime reconnect with a bounded, per-client text/tool history (20 turns
+  by default), idle expiration, and session diagnostics.
 
 OAuth MCP servers should initially be configured through Home Assistant's built-in MCP
 client integration, which owns the OAuth flow and contributes its tools to Assist. A
@@ -109,6 +111,16 @@ refresh the catalog explicitly. Active Realtime sessions receive changed tools b
 their next push-to-talk turn. If Home Assistant's `/api/mcp/assist` endpoint returns a
 confirmed 404, the App retries the configured base `/api/mcp` endpoint; authentication
 and other failures do not trigger that fallback.
+
+## Session lifecycle
+
+Each browser has an isolated OpenAI Realtime session. `max_sessions` limits concurrent
+clients and `idle_timeout_seconds` closes inactive sessions. On an upstream disconnect,
+the App reconnects automatically and rebuilds context from input transcriptions,
+assistant transcripts, and tool results. `history_turn_limit` bounds that in-memory
+context (20 turns by default); captured and generated audio is not retained. A session
+runs at most four tool calls concurrently and cancels its reader, encoder, and tool tasks
+when the browser disconnects.
 
 ## Development
 

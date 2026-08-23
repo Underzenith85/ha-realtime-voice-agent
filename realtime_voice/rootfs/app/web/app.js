@@ -9,6 +9,7 @@ const saveRoute = document.querySelector("#saveRoute");
 const refreshTools = document.querySelector("#refreshTools");
 const catalogSummary = document.querySelector("#catalogSummary");
 const mcpServers = document.querySelector("#mcpServers");
+const sessionSummary = document.querySelector("#sessionSummary");
 
 function createClientId() {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -56,6 +57,11 @@ function setMcpStatus(mcp) {
     if (server.status !== "connected" || server.schema_errors.length) item.className = "mcp-error";
     return item;
   }));
+}
+
+function setSessionDiagnostics(diagnostics) {
+  const session = diagnostics.session;
+  sessionSummary.textContent = `${diagnostics.session_count} active · age ${session.age_seconds}s · idle ${session.idle_seconds}s · ${session.reconnects} reconnects · ${session.history_turns} remembered turns`;
 }
 
 async function playPcm(buffer) {
@@ -109,6 +115,7 @@ async function connect() {
         : "Microphone access requires HTTPS (or localhost).";
       setRoute(message.route);
       setMcpStatus(message.mcp);
+      setSessionDiagnostics(message.diagnostics);
       socket.send(JSON.stringify({ type: "speakers_list" }));
     } else if (message.type === "speakers") {
       speaker.replaceChildren(...message.items.map(item => new Option(item.name, item.entity_id)));
@@ -123,6 +130,15 @@ async function connect() {
       transcript.textContent += message.delta;
     } else if (message.type === "response.done") {
       transcript.textContent += "\n";
+    } else if (message.type === "session_diagnostics") {
+      setSessionDiagnostics(message);
+    } else if (message.type === "session.reconnecting") {
+      statusEl.textContent = "Reconnecting…";
+    } else if (message.type === "session.reconnected") {
+      statusEl.textContent = "Ready";
+    } else if (message.type === "session.expired") {
+      statusEl.textContent = "Idle timeout";
+      transcript.textContent = "Session expired after inactivity. Reconnecting…";
     }
   };
   socket.onclose = () => {
@@ -169,3 +185,6 @@ refreshTools.addEventListener("click", () => {
 });
 
 connect();
+setInterval(() => {
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "diagnostics_get" }));
+}, 10000);
