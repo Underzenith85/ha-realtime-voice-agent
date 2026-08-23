@@ -1,0 +1,59 @@
+esphome:
+  name: realtime-voice-compile-test
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../esphome/components
+    components: [realtime_voice_client]
+
+i2s_audio:
+  - id: i2s_input
+    i2s_lrclk_pin: GPIO14
+    i2s_bclk_pin: GPIO13
+  - id: i2s_output
+    i2s_lrclk_pin: GPIO7
+    i2s_bclk_pin: GPIO8
+
+microphone:
+  - platform: i2s_audio
+    id: test_microphone
+    i2s_audio_id: i2s_input
+    i2s_din_pin: GPIO15
+    adc_type: external
+    sample_rate: 24000
+    bits_per_sample: 32bit
+    channel: stereo
+
+speaker:
+  - platform: i2s_audio
+    id: hardware_speaker
+    i2s_audio_id: i2s_output
+    i2s_dout_pin: GPIO10
+    dac_type: external
+    sample_rate: 48000
+    bits_per_sample: 32bit
+    channel: stereo
+  - platform: resampler
+    id: test_speaker
+    output_speaker: hardware_speaker
+    sample_rate: 48000
+    bits_per_sample: 16
+
+realtime_voice_client:
+  id: realtime_voice
+  url: ws://192.0.2.1:8099/device/ws
+  token: compile-test-not-a-real-secret
+  client_id: compile-test-voice-pe
+  microphone:
+    microphone: test_microphone
+    channels: 0
+    bits_per_sample: 16
+  speaker: test_speaker

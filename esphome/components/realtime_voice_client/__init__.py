@@ -2,7 +2,7 @@ import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_MICROPHONE, CONF_SPEAKER
 
 from esphome import codegen as cg
-from esphome.components import microphone, speaker
+from esphome.components import esp32, microphone, speaker
 
 CODEOWNERS = ["@Underzenith85"]
 DEPENDENCIES = ["esp32", "microphone", "speaker"]
@@ -54,4 +54,4 @@ async def to_code(config):
     cg.add(var.set_token(config[CONF_TOKEN]))
     cg.add(var.set_client_id(config[CONF_CLIENT_ID]))
     cg.add(var.set_name(config[CONF_NAME]))
-    cg.add_library("espressif/esp_websocket_client", "1.5.0")
+    esp32.add_idf_component(name="espressif/esp_websocket_client", ref="1.8.0")
