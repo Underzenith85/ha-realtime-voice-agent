@@ -7,7 +7,16 @@ const mode = document.querySelector("#mode");
 const announce = document.querySelector("#announce");
 const saveRoute = document.querySelector("#saveRoute");
 
-const clientId = localStorage.getItem("voiceClientId") || crypto.randomUUID();
+function createClientId() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  if (typeof crypto.getRandomValues === "function") {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+const clientId = localStorage.getItem("voiceClientId") || createClientId();
 localStorage.setItem("voiceClientId", clientId);
 let socket;
 let context;
