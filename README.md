@@ -178,6 +178,11 @@ Home Assistant API services. It exercises browser and speaker routes, concurrent
 tool calls, cancellation, reconnects, and media delivery without paid API access or HA
 hardware.
 
+Before a tagged release, run and attach the redacted evidence from the
+[Home Assistant OS acceptance record](docs/haos-acceptance.md). Automated tests do not
+replace the fresh-install, live MCP boundary, browser microphone, and physical-speaker
+checks.
+
 The App requires `ffmpeg` at runtime for generic speaker output; it is included in the
 App image.
 
