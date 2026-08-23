@@ -122,6 +122,13 @@ context (20 turns by default); captured and generated audio is not retained. A s
 runs at most four tool calls concurrently and cancels its reader, encoder, and tool tasks
 when the browser disconnects.
 
+MCP calls are schema-validated before dispatch, bounded by per-server timeouts and a
+shared concurrency limit, and recorded in redacted audit logs using a hash of arguments.
+Media links are single-use as well as short-lived. Per-minute limits bound browser
+connection attempts, media fetches, and tool calls. The broker also exposes an optional
+policy callback for installations that need to deny or externally approve selected
+high-risk tools; no policy callback preserves the default no-confirmation flow.
+
 ## Development
 
 ```bash

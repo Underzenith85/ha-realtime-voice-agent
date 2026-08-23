@@ -1,5 +1,5 @@
 name: Realtime Voice Agent
-version: "0.4.0"
+version: "0.5.0"
 slug: realtime_voice_agent
 description: OpenAI Realtime voice gateway with Home Assistant and MCP tools
 url: https://github.com/Underzenith85/ha-realtime-voice-agent
@@ -31,6 +31,10 @@ options:
   idle_timeout_seconds: 600
   history_turn_limit: 20
   input_transcription_model: gpt-4o-mini-transcribe
+  session_rate_limit_per_minute: 30
+  media_rate_limit_per_minute: 60
+  tool_rate_limit_per_minute: 60
+  shared_tool_concurrency: 16
   ha_mcp_url: http://supervisor/core/api/mcp/assist
   speaker_base_url: http://homeassistant.local:8099
   mcp_servers: []
@@ -43,6 +47,10 @@ schema:
   idle_timeout_seconds: int(60,7200)
   history_turn_limit: int(1,100)
   input_transcription_model: str
+  session_rate_limit_per_minute: int(1,600)
+  media_rate_limit_per_minute: int(1,600)
+  tool_rate_limit_per_minute: int(1,600)
+  shared_tool_concurrency: int(1,64)
   ha_mcp_url: url
   speaker_base_url: url
   mcp_servers:
@@ -52,6 +60,7 @@ schema:
       token: password?
       allowed_tools:
         - str
+      call_timeout_seconds: float(0.1,300)
       headers:
         - name: str
           value: password

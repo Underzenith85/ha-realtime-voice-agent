@@ -9,13 +9,14 @@ def test_media_lifecycle() -> None:
     store.append(item, b"two")
     store.finish(item)
 
-    assert store.get(token) is item
+    assert store.claim(token) is item
+    assert store.claim(token) is None
     assert b"".join(item.chunks) == b"onetwo"
     assert item.complete.is_set()
 
 
 def test_unknown_media_token() -> None:
-    assert MediaStore().get("missing") is None
+    assert MediaStore().claim("missing") is None
 
 
 def test_expired_media_token_is_removed(monkeypatch) -> None:
@@ -26,5 +27,5 @@ def test_expired_media_token_is_removed(monkeypatch) -> None:
 
     now = 1006.0
 
-    assert store.get(token) is None
+    assert store.claim(token) is None
     assert token not in store._items

@@ -29,6 +29,7 @@ class McpServerConfig:
     token: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
     allowed_tools: frozenset[str] = field(default_factory=frozenset)
+    call_timeout_seconds: float = 30
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> McpServerConfig:
@@ -42,6 +43,7 @@ class McpServerConfig:
             token=raw.get("token"),
             headers=headers,
             allowed_tools=frozenset(raw.get("allowed_tools", [])),
+            call_timeout_seconds=float(raw.get("call_timeout_seconds", 30)),
         )
 
 
@@ -61,6 +63,10 @@ class Settings:
     speaker_base_url: str = DEFAULT_SPEAKER_BASE_URL
     routes_path: str = "/data/routes.json"
     tool_timeout_seconds: float = 30
+    session_rate_limit_per_minute: int = 30
+    media_rate_limit_per_minute: int = 60
+    tool_rate_limit_per_minute: int = 60
+    shared_tool_concurrency: int = 16
     mcp_servers: tuple[McpServerConfig, ...] = ()
 
     @classmethod
@@ -93,5 +99,9 @@ class Settings:
             ),
             ha_mcp_url=raw.get("ha_mcp_url", DEFAULT_HA_MCP_URL),
             speaker_base_url=raw.get("speaker_base_url", DEFAULT_SPEAKER_BASE_URL),
+            session_rate_limit_per_minute=int(raw.get("session_rate_limit_per_minute", 30)),
+            media_rate_limit_per_minute=int(raw.get("media_rate_limit_per_minute", 60)),
+            tool_rate_limit_per_minute=int(raw.get("tool_rate_limit_per_minute", 60)),
+            shared_tool_concurrency=int(raw.get("shared_tool_concurrency", 16)),
             mcp_servers=tuple(servers),
         )

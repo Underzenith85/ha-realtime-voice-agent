@@ -309,6 +309,7 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
             response = await client.get(f"/media/{token}")
             assert response.status == 200
             assert await response.read() == b"fake-mp3:speaker audio"
+            assert (await client.get(f"/media/{token}")).status == 404
 
             overlap = await start_voice_client(client, "overlap-client")
             progressive = await start_voice_client(client, "progressive-client")

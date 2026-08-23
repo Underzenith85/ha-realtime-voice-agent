@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import re
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from dataclasses import asdict, dataclass, field
@@ -96,6 +98,7 @@ class _Command:
 
 
 CatalogCallback = Callable[[], Awaitable[None]]
+PolicyHook = Callable[[ToolBinding, dict[str, Any], str | None], bool | Awaitable[bool]]
 
 
 class McpConnection:
@@ -304,10 +307,18 @@ class McpConnection:
 
 
 class McpBroker:
-    def __init__(self, configs: tuple[McpServerConfig, ...], output_limit: int = 16_384) -> None:
+    def __init__(
+        self,
+        configs: tuple[McpServerConfig, ...],
+        output_limit: int = 16_384,
+        shared_concurrency: int = 16,
+        policy_hook: PolicyHook | None = None,
+    ) -> None:
         self.bindings: dict[str, ToolBinding] = {}
         self.catalog_version = 0
         self.output_limit = output_limit
+        self._call_limit = asyncio.Semaphore(shared_concurrency)
+        self._policy_hook = policy_hook
         self._catalog_lock = asyncio.Lock()
         self.connections = {
             config.name: McpConnection(config, self._rebuild_catalog) for config in configs
@@ -390,13 +401,58 @@ class McpBroker:
     def snapshot(self) -> tuple[int, dict[str, ToolBinding]]:
         return self.catalog_version, self.bindings.copy()
 
-    async def call_binding(self, binding: ToolBinding, arguments: dict[str, Any]) -> str:
-        connection = self.connections[binding.server_name]
-        result = await connection.call_tool(binding.remote_name, arguments)
-        payload = json.dumps(result.model_dump(mode="json"), separators=(",", ":"))
-        if len(payload.encode()) > self.output_limit:
-            payload = payload.encode()[: self.output_limit].decode(errors="ignore") + "…"
-        return payload
+    async def call_binding(
+        self,
+        binding: ToolBinding,
+        arguments: dict[str, Any],
+        *,
+        client_id: str | None = None,
+    ) -> str:
+        started = time.monotonic()
+        argument_hash = hashlib.sha256(
+            json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        outcome = "error"
+        try:
+            if not Draft7Validator(binding.schema).is_valid(arguments):
+                outcome = "invalid_arguments"
+                raise ValueError("tool arguments do not match the advertised schema")
+            if self._policy_hook:
+                allowed = self._policy_hook(binding, arguments, client_id)
+                if inspect.isawaitable(allowed):
+                    allowed = await allowed
+                if not allowed:
+                    outcome = "policy_denied"
+                    raise PermissionError("tool call denied by policy")
+            connection = self.connections[binding.server_name]
+            async with self._call_limit:
+                result = await asyncio.wait_for(
+                    connection.call_tool(binding.remote_name, arguments),
+                    timeout=connection.config.call_timeout_seconds,
+                )
+            payload = json.dumps(result.model_dump(mode="json"), separators=(",", ":"))
+            if len(payload.encode()) > self.output_limit:
+                prefix = payload.encode()[: max(0, self.output_limit - 80)].decode(errors="ignore")
+                payload = json.dumps(
+                    {"truncated": True, "content_prefix": prefix}, separators=(",", ":")
+                )
+            outcome = "success"
+            return payload
+        finally:
+            LOGGER.info(
+                "MCP tool audit %s",
+                json.dumps(
+                    {
+                        "tool": binding.public_name,
+                        "server": binding.server_name,
+                        "duration_ms": round((time.monotonic() - started) * 1000),
+                        "outcome": outcome,
+                        "client_id": client_id,
+                        "argument_sha256": argument_hash,
+                    },
+                    separators=(",", ":"),
+                ),
+            )
 
     async def call(self, public_name: str, arguments: dict[str, Any]) -> str:
         binding = self.bindings.get(public_name)

@@ -27,10 +27,9 @@ class MediaStore:
         self._items[token] = item
         return token, item
 
-    def get(self, token: str) -> MediaObject | None:
-        item = self._items.get(token)
+    def claim(self, token: str) -> MediaObject | None:
+        item = self._items.pop(token, None)
         if item is None or item.expires_at < time.monotonic():
-            self._items.pop(token, None)
             return None
         return item
 

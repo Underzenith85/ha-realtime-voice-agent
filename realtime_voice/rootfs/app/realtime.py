@@ -17,6 +17,7 @@ import aiohttp
 
 from app.config import Settings
 from app.mcp_broker import McpBroker, ToolBinding
+from app.rate_limit import RateLimiter
 
 LOGGER = logging.getLogger(__name__)
 AudioCallback = Callable[[bytes], Awaitable[None]]
@@ -144,6 +145,7 @@ class RealtimeSession:
         self._connect_lock = asyncio.Lock()
         self._send_lock = asyncio.Lock()
         self._tool_limit = asyncio.Semaphore(4)
+        self._tool_rate = RateLimiter(settings.tool_rate_limit_per_minute)
         self._tool_tasks: set[asyncio.Task[None]] = set()
 
     async def start(self) -> None:
@@ -348,17 +350,23 @@ class RealtimeSession:
         arguments_raw = event.get("arguments") or "{}"
         async with self._tool_limit:
             try:
+                if not self._tool_rate.allow("session"):
+                    raise RuntimeError("tool call rate exceeded")
                 arguments = json.loads(arguments_raw)
                 binding = binding or self.tool_bindings.get(event["name"])
                 if binding is None:
                     raise KeyError("tool binding is no longer available")
                 output = await asyncio.wait_for(
-                    self.broker.call_binding(binding, arguments),
+                    self.broker.call_binding(binding, arguments, client_id=self.client_id),
                     timeout=self.settings.tool_timeout_seconds,
                 )
             except Exception as err:  # returned to the model, not hidden in logs
-                LOGGER.exception("Tool call failed: %s", event.get("name"))
-                output = json.dumps({"error": type(err).__name__, "message": str(err)[:500]})
+                LOGGER.warning(
+                    "Tool call failed: tool=%s error=%s",
+                    event.get("name"),
+                    type(err).__name__,
+                )
+                output = json.dumps({"error": type(err).__name__})
             self.history.add_tool(
                 ToolRecord(event.get("name", "unknown"), call_id, arguments_raw, output),
                 turn,
