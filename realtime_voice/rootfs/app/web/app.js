@@ -58,6 +58,9 @@ async function playPcm(buffer) {
 }
 
 async function startCapture() {
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    throw new Error("Microphone access requires HTTPS or localhost");
+  }
   context ||= new AudioContext();
   await context.resume();
   await context.audioWorklet.addModule("static/pcm-worklet.js");
@@ -80,9 +83,12 @@ async function connect() {
     if (message.type === "session_ready") {
       statusEl.textContent = "Ready";
       statusEl.classList.add("ready");
-      ptt.disabled = false;
+      const microphoneAvailable = window.isSecureContext && navigator.mediaDevices?.getUserMedia;
+      ptt.disabled = !microphoneAvailable;
       saveRoute.disabled = false;
-      transcript.textContent = "Hold the button and speak.";
+      transcript.textContent = microphoneAvailable
+        ? "Hold the button and speak."
+        : "Microphone access requires HTTPS (or localhost).";
       setRoute(message.route);
       socket.send(JSON.stringify({ type: "speakers_list" }));
     } else if (message.type === "speakers") {
