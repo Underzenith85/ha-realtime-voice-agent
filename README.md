@@ -129,6 +129,12 @@ connection attempts, media fetches, and tool calls. The broker also exposes an o
 policy callback for installations that need to deny or externally approve selected
 high-risk tools; no policy callback preserves the default no-confirmation flow.
 
+The browser UI exposes its current route and listening/thinking/tool/speaking phase,
+reports first-response latency and structured errors, and supports accessible Space-key
+push-to-talk. Output routes can be tested before saving. Explicit cancel and conversation
+reset controls are available, and network/sleep reconnects are guarded against duplicate
+sessions and capture resources.
+
 ## Development
 
 ```bash

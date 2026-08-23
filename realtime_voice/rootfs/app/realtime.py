@@ -68,6 +68,10 @@ class ConversationHistory:
     def __len__(self) -> int:
         return len(self._turns)
 
+    def clear(self) -> None:
+        self._turns.clear()
+        self.current = None
+
     def restore_events(self) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         for turn in self._turns:
@@ -185,6 +189,13 @@ class RealtimeSession:
         if self.response_active:
             await self._send({"type": "response.cancel"})
         await self._send({"type": "input_audio_buffer.clear"})
+
+    async def reset(self) -> None:
+        self.history.clear()
+        self.response_active = False
+        websocket = self.ws
+        if websocket:
+            await websocket.close()
 
     async def close(self) -> None:
         self._closing = True
@@ -316,6 +327,7 @@ class RealtimeSession:
             event_type = event.get("type")
             if event_type == "response.created":
                 self.response_active = True
+                await self.on_event(event)
             elif event_type == "response.output_audio.delta":
                 await self.on_audio(base64.b64decode(event["delta"]))
             elif event_type == "response.output_audio_transcript.delta":
@@ -326,6 +338,9 @@ class RealtimeSession:
                 await self.on_event(event)
             elif event_type == "response.function_call_arguments.done":
                 binding = self.tool_bindings.get(event.get("name", ""))
+                await self.on_event(
+                    {"type": event_type, "name": event.get("name"), "call_id": event.get("call_id")}
+                )
                 task = asyncio.create_task(self._call_tool(event, binding, self.history.current))
                 self._tool_tasks.add(task)
                 task.add_done_callback(self._tool_tasks.discard)

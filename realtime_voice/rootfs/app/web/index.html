@@ -10,11 +10,16 @@
     <main>
       <header>
         <h1>Realtime Voice Agent</h1>
-        <span id="status" class="status">Disconnected</span>
+        <span id="status" class="status" role="status" aria-live="polite">Disconnected</span>
       </header>
       <section class="card">
-        <button id="ptt" disabled>Hold to talk</button>
+        <button id="ptt" disabled aria-pressed="false" aria-describedby="pttHelp">Hold to talk</button>
+        <p id="pttHelp" class="hint">Hold this button or the Space key to talk.</p>
         <p id="transcript" aria-live="polite">Connect to begin.</p>
+        <div class="actions">
+          <button id="cancel" disabled>Cancel response</button>
+          <button id="resetConversation" disabled>Reset conversation</button>
+        </div>
       </section>
       <section class="card routing">
         <h2>Output</h2>
@@ -34,10 +39,16 @@
           </select>
         </label>
         <label class="check"><input id="announce" type="checkbox" checked disabled> Announcement</label>
-        <button id="saveRoute" disabled>Save output route</button>
+        <div class="actions">
+          <button id="testRoute" disabled>Test output</button>
+          <button id="saveRoute" disabled>Save output route</button>
+        </div>
+        <p id="routeResult" role="status" aria-live="polite"></p>
       </section>
       <section class="card diagnostics">
         <h2>Session</h2>
+        <p id="routeSummary">Current route: unavailable</p>
+        <p id="phaseSummary">Phase: disconnected</p>
         <p id="sessionSummary">Connect to view session status.</p>
         <div class="section-heading">
           <h2>MCP tools</h2>

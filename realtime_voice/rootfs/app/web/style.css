@@ -10,13 +10,17 @@ h2 { margin-top: 0; font-size: 1.05rem; }
 #ptt { width: 100%; min-height: 150px; border: 0; border-radius: 18px; background: #03a9f4; color: #00131d; font-size: 1.5rem; font-weight: 700; touch-action: none; }
 #ptt.active { background: #ef4444; color: white; transform: scale(.985); }
 button:disabled { opacity: .45; }
+.hint { margin-bottom: 0; color: #94a3b8; font-size: .9rem; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.actions button { flex: 1; }
 .routing { display: grid; gap: 14px; }
 label { display: grid; gap: 6px; color: #cbd5e1; }
 label.check { display: flex; align-items: center; }
-select, .routing button, .diagnostics button { padding: 10px; border-radius: 8px; border: 1px solid #64748b; font: inherit; }
-.routing button:not(:disabled), .diagnostics button:not(:disabled) { background: #0284c7; color: white; cursor: pointer; }
+select, .routing button, .diagnostics button, .actions button { padding: 10px; border-radius: 8px; border: 1px solid #64748b; font: inherit; }
+.routing button:not(:disabled), .diagnostics button:not(:disabled), .actions button:not(:disabled) { background: #0284c7; color: white; cursor: pointer; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .section-heading h2 { margin: 0; }
 .diagnostics ul { margin-bottom: 0; padding-left: 20px; }
 .mcp-error { color: #fca5a5; }
-#transcript { min-height: 3em; color: #cbd5e1; }
+#transcript { min-height: 3em; color: #cbd5e1; white-space: pre-wrap; }
+#routeResult:empty { display: none; }
