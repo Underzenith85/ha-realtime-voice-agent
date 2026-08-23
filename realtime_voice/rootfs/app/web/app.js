@@ -7,7 +7,16 @@ const mode = document.querySelector("#mode");
 const announce = document.querySelector("#announce");
 const saveRoute = document.querySelector("#saveRoute");
 
-const clientId = localStorage.getItem("voiceClientId") || crypto.randomUUID();
+function createClientId() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  if (typeof crypto.getRandomValues === "function") {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+const clientId = localStorage.getItem("voiceClientId") || createClientId();
 localStorage.setItem("voiceClientId", clientId);
 let socket;
 let context;
@@ -49,6 +58,9 @@ async function playPcm(buffer) {
 }
 
 async function startCapture() {
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    throw new Error("Microphone access requires HTTPS or localhost");
+  }
   context ||= new AudioContext();
   await context.resume();
   await context.audioWorklet.addModule("static/pcm-worklet.js");
@@ -71,9 +83,12 @@ async function connect() {
     if (message.type === "session_ready") {
       statusEl.textContent = "Ready";
       statusEl.classList.add("ready");
-      ptt.disabled = false;
+      const microphoneAvailable = window.isSecureContext && navigator.mediaDevices?.getUserMedia;
+      ptt.disabled = !microphoneAvailable;
       saveRoute.disabled = false;
-      transcript.textContent = "Hold the button and speak.";
+      transcript.textContent = microphoneAvailable
+        ? "Hold the button and speak."
+        : "Microphone access requires HTTPS (or localhost).";
       setRoute(message.route);
       socket.send(JSON.stringify({ type: "speakers_list" }));
     } else if (message.type === "speakers") {
