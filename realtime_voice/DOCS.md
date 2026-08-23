@@ -30,5 +30,13 @@ have configurable per-minute limits. An installation that needs approval for hig
 tools can supply the broker policy hook; without one, the existing no-confirmation
 behavior remains unchanged.
 
+The Web UI shows the current saved route, active listening/thinking/tool/speaking phase,
+first-response latency, and session/tool diagnostics. **Test output** checks a selected
+browser or speaker route without saving it. **Cancel response** interrupts playback, and
+**Reset conversation** clears retained context. Push-to-talk works by pointer or by
+holding Space when focus is not in a form control. Microphone permission failures include
+recovery guidance, and reconnects reuse capture resources without opening overlapping
+sessions.
+
 For generic speakers, publish port 8099 only to the trusted LAN and set
 `speaker_base_url` to the exact address those devices use to reach the add-on.

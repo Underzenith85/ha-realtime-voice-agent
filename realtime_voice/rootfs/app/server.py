@@ -135,9 +135,16 @@ class VoiceServer:
                     progressive_reader = None
             safe = {
                 key: event[key]
-                for key in ("type", "delta", "transcript", "reconnects")
+                for key in ("type", "delta", "transcript", "reconnects", "name", "call_id")
                 if key in event
             }
+            if event["type"] == "error":
+                error = event.get("error", {})
+                safe["error"] = {
+                    "type": error.get("type", "upstream_error"),
+                    "code": error.get("code"),
+                    "message": str(error.get("message", "Realtime request failed"))[:300],
+                }
             await ws.send_json(safe)
 
         assert self.http
@@ -196,6 +203,33 @@ class VoiceServer:
                     route = OutputRoute(**event["route"]).validate()
                     self.routes.set(hello.client_id, route)
                     await ws.send_json({"type": "route", "route": asdict(route)})
+                elif event.get("type") == "route_test":
+                    candidate = OutputRoute(**event["route"]).validate()
+                    try:
+                        if candidate.sink == "media_player":
+                            encoded = await encode_mp3(b"\0" * 12_000)
+                            token, item = self.media.create()
+                            self.media.append(item, encoded)
+                            self.media.finish(item)
+                            await self._play(candidate, request, token)
+                        await ws.send_json(
+                            {
+                                "type": "route_test_result",
+                                "ok": True,
+                                "route": asdict(candidate),
+                                "message": "Playback request accepted",
+                            }
+                        )
+                    except Exception as err:
+                        LOGGER.warning("Route test failed: %s", type(err).__name__)
+                        await ws.send_json(
+                            {
+                                "type": "route_test_result",
+                                "ok": False,
+                                "route": asdict(candidate),
+                                "error": {"type": type(err).__name__, "message": "Playback failed"},
+                            }
+                        )
                 elif event.get("type") == "speakers_list" and self.speakers:
                     await ws.send_json(
                         {"type": "speakers", "items": await self.speakers.list_speakers()}
@@ -208,6 +242,18 @@ class VoiceServer:
                     await ws.send_json(
                         {"type": "session_diagnostics", **self._diagnostics(realtime)}
                     )
+                elif event.get("type") == "conversation_reset":
+                    await realtime.reset()
+                    await ws.send_json({"type": "conversation_reset", "ok": True})
+        except Exception as err:
+            LOGGER.warning("Browser session failed: %s", type(err).__name__)
+            if not ws.closed:
+                await ws.send_json(
+                    {
+                        "type": "app.error",
+                        "error": {"type": type(err).__name__, "message": "Session request failed"},
+                    }
+                )
         finally:
             if progressive:
                 await progressive.cancel()

@@ -311,6 +311,22 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
             assert await response.read() == b"fake-mp3:speaker audio"
             assert (await client.get(f"/media/{token}")).status == 404
 
+            await speaker.send_json(
+                {
+                    "type": "route_test",
+                    "route": {
+                        "sink": "media_player",
+                        "entity_id": "media_player.sonos_beam",
+                        "mode": "buffered",
+                        "announce": True,
+                        "volume": None,
+                    },
+                }
+            )
+            route_test = await receive_type(speaker, "route_test_result")
+            assert route_test["ok"] is True
+            assert len(services.play_calls) == 2
+
             overlap = await start_voice_client(client, "overlap-client")
             progressive = await start_voice_client(client, "progressive-client")
             session_update = next(
@@ -397,9 +413,9 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
                     await asyncio.sleep(0.01)
 
             async with asyncio.timeout(5):
-                while len(services.play_calls) < 2:
+                while len(services.play_calls) < 3:
                     await asyncio.sleep(0.01)
-            progressive_token = services.play_calls[1]["media_content_id"].rsplit("/", 1)[-1]
+            progressive_token = services.play_calls[2]["media_content_id"].rsplit("/", 1)[-1]
             progressive_response = await client.get(f"/media/{progressive_token}")
             assert progressive_response.status == 200
             assert await progressive_response.read() == b"progressive:browser audio"
@@ -456,6 +472,12 @@ async def test_reconnect_restores_context_and_reports_diagnostics(tmp_path: Any)
             ]
             assert restored_messages[0]["content"][0]["text"] == "remember me"
             assert restored_messages[1]["content"][0]["text"] == "Hello from the fake model"
+
+            await ws.send_json({"type": "conversation_reset"})
+            assert (await receive_type(ws, "conversation_reset"))["ok"] is True
+            await ws.send_json({"type": "diagnostics_get"})
+            reset_diagnostics = await receive_type(ws, "session_diagnostics")
+            assert reset_diagnostics["session"]["history_turns"] == 0
             await ws.close()
 
 
