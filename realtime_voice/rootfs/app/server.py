@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -14,7 +16,7 @@ from typing import Any
 
 from aiohttp import WSMsgType, web
 
-from app.config import Settings
+from app.config import HardwareClientConfig, Settings
 from app.encoder import ProgressiveMp3Encoder, encode_mp3
 from app.ha_apis import discover_managed_mcp_configs
 from app.mcp_broker import McpBroker
@@ -33,7 +35,11 @@ WEB_ROOT = Path(__file__).parent / "web"
 @web.middleware
 async def ingress_or_media_only(request: web.Request, handler: Any) -> web.StreamResponse:
     """Keep the control UI ingress-only while allowing signed speaker media pulls."""
-    if not request.path.startswith("/media/") and "X-Ingress-Path" not in request.headers:
+    if (
+        not request.path.startswith("/media/")
+        and request.path != "/device/ws"
+        and "X-Ingress-Path" not in request.headers
+    ):
         raise web.HTTPForbidden(text="Open this interface through Home Assistant ingress")
     return await handler(request)
 
@@ -56,6 +62,7 @@ class VoiceServer:
         self.timers = TimerManager(settings.timers_path)
         self.http = None
         self.speakers = None
+        self.hardware_clients = {client.client_id: client for client in settings.hardware_clients}
 
     async def start(self, app: web.Application) -> None:
         import aiohttp
@@ -78,9 +85,33 @@ class VoiceServer:
         if self.http:
             await self.http.close()
 
-    async def websocket(self, request: web.Request) -> web.WebSocketResponse:
+    async def device_websocket(self, request: web.Request) -> web.WebSocketResponse:
         peer = request.remote or "unknown"
         if not self.session_rate.allow(peer):
+            raise web.HTTPTooManyRequests(text="device authentication rate exceeded")
+        authorization = request.headers.get("Authorization", "")
+        token = authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else ""
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        hardware = next(
+            (
+                client
+                for client in self.hardware_clients.values()
+                if hmac.compare_digest(client.token_sha256, digest)
+            ),
+            None,
+        )
+        if hardware is None:
+            raise web.HTTPUnauthorized(text="invalid device credential")
+        return await self.websocket(request, hardware=hardware, rate_checked=True)
+
+    async def websocket(
+        self,
+        request: web.Request,
+        hardware: HardwareClientConfig | None = None,
+        rate_checked: bool = False,
+    ) -> web.WebSocketResponse:
+        peer = request.remote or "unknown"
+        if not rate_checked and not self.session_rate.allow(peer):
             raise web.HTTPTooManyRequests(text="session connection rate exceeded")
         async with self._session_lock:
             if self._session_count >= self.settings.max_sessions:
@@ -89,13 +120,28 @@ class VoiceServer:
         ws = web.WebSocketResponse(heartbeat=20, max_msg_size=512 * 1024)
         try:
             await ws.prepare(request)
-            first = await ws.receive_json()
+            first = await asyncio.wait_for(ws.receive_json(), timeout=10)
             hello = parse_hello(first)
+            if hardware and (
+                hello.client_id != hardware.client_id or hello.client_type != "voice_pe"
+            ):
+                await ws.close(code=1008, message=b"device identity mismatch")
+                async with self._session_lock:
+                    self._session_count -= 1
+                return ws
         except BaseException:
             async with self._session_lock:
                 self._session_count -= 1
             raise
         route = self.routes.get(hello.client_id)
+        if hardware and not self.routes.contains(hello.client_id):
+            route = OutputRoute(
+                sink="media_player" if hardware.entity_id else "browser",
+                entity_id=hardware.entity_id,
+                mode=hardware.mode,
+                announce=hardware.announce,
+            ).validate()
+            self.routes.set(hello.client_id, route)
         pcm = bytearray()
         progressive: ProgressiveMp3Encoder | None = None
         progressive_item: MediaObject | None = None
@@ -424,6 +470,7 @@ def create_app(settings: Settings) -> web.Application:
     app = web.Application(middlewares=[ingress_or_media_only])
     app["voice"] = service
     app.router.add_get("/ws", service.websocket)
+    app.router.add_get("/device/ws", service.device_websocket)
     app.router.add_get("/media/{token}", service.media_stream)
     app.router.add_get("/", lambda request: web.FileResponse(WEB_ROOT / "index.html"))
     app.router.add_static("/static", WEB_ROOT)

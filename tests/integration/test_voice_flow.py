@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import socket
 from collections.abc import AsyncIterator
@@ -13,7 +14,7 @@ import pytest
 import uvicorn
 from aiohttp import WSMsgType, WSServerHandshakeError, web
 from aiohttp.test_utils import TestClient, TestServer
-from app.config import McpServerConfig, Settings
+from app.config import HardwareClientConfig, McpServerConfig, Settings
 from app.server import create_app
 from mcp.server.fastmcp import FastMCP
 
@@ -193,6 +194,91 @@ async def start_voice_client(client: TestClient, client_id: str) -> Any:
     )
     assert (await receive_type(ws, "session_ready"))["client_id"] == client_id
     return ws
+
+
+async def start_device_client(client: TestClient, client_id: str, token: str) -> Any:
+    ws = await client.ws_connect("/device/ws", headers={"Authorization": f"Bearer {token}"})
+    await ws.send_json(
+        {
+            "type": "hello",
+            "protocol": 1,
+            "client_id": client_id,
+            "client_type": "voice_pe",
+            "name": "Integration Voice PE",
+        }
+    )
+    assert (await receive_type(ws, "session_ready"))["client_id"] == client_id
+    return ws
+
+
+@pytest.mark.asyncio
+async def test_authenticated_voice_pe_and_browser_run_concurrently(
+    tmp_path: Any,
+) -> None:
+    services = FakeServices()
+    external = web.Application()
+    external.router.add_get("/v1/realtime", services.realtime)
+    token = "one-time-generated-device-secret"
+    client_id = "kitchen-voice-pe"
+
+    async with run_aiohttp_app(external) as external_server:
+        base_url = str(external_server.make_url("")).rstrip("/")
+        settings = Settings(
+            openai_api_key="test-key",
+            openai_realtime_url=f"{base_url}/v1/realtime",
+            ha_api_url=base_url,
+            routes_path=str(tmp_path / "routes.json"),
+            timers_path=str(tmp_path / "timers.json"),
+            hardware_clients=(
+                HardwareClientConfig(
+                    client_id=client_id,
+                    name="Kitchen Voice PE",
+                    token_sha256=hashlib.sha256(token.encode()).hexdigest(),
+                ),
+            ),
+        )
+        app = create_app(settings)
+        async with TestClient(TestServer(app)) as client:
+            with pytest.raises(WSServerHandshakeError) as missing:
+                await client.ws_connect("/device/ws")
+            assert missing.value.status == 401
+            with pytest.raises(WSServerHandshakeError) as invalid:
+                await client.ws_connect(
+                    "/device/ws", headers={"Authorization": "Bearer revoked-token"}
+                )
+            assert invalid.value.status == 401
+
+            mismatched = await client.ws_connect(
+                "/device/ws", headers={"Authorization": f"Bearer {token}"}
+            )
+            await mismatched.send_json(
+                {
+                    "type": "hello",
+                    "protocol": 1,
+                    "client_id": "other-device",
+                    "client_type": "voice_pe",
+                }
+            )
+            assert (await mismatched.receive()).type in {WSMsgType.CLOSE, WSMsgType.CLOSED}
+
+            device = await start_device_client(client, client_id, token)
+            browser = await start_voice_client(client, "browser-alongside-device")
+            assert app["voice"].routes.contains(client_id)
+            assert app["voice"].routes.get(client_id).sink == "browser"
+
+            await device.send_json({"type": "ptt_start"})
+            await device.send_bytes(b"device-turn")
+            await device.send_json({"type": "ptt_stop"})
+            await browser.send_json({"type": "ptt_start"})
+            await browser.send_bytes(b"browser-turn")
+            await browser.send_json({"type": "ptt_stop"})
+
+            assert await receive_type(device, "audio") == b"browser audio"
+            assert await receive_type(browser, "audio") == b"browser audio"
+            await receive_type(device, "response.done")
+            await receive_type(browser, "response.done")
+            await device.close()
+            await browser.close()
 
 
 class FakeProgressiveEncoder:

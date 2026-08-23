@@ -42,6 +42,9 @@ class RouteStore:
     def get(self, client_id: str) -> OutputRoute:
         return self._routes.get(client_id, OutputRoute())
 
+    def contains(self, client_id: str) -> bool:
+        return client_id in self._routes
+
     def set(self, client_id: str, route: OutputRoute) -> None:
         self._routes[client_id] = route.validate()
         self.path.parent.mkdir(parents=True, exist_ok=True)
