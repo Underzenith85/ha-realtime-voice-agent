@@ -6,6 +6,9 @@ requires-python = ">=3.12"
 [tool.pytest.ini_options]
 pythonpath = ["realtime_voice/rootfs"]
 asyncio_mode = "auto"
+markers = [
+  "integration: exercises the application against local fake external services",
+]
 
 [tool.ruff]
 line-length = 100

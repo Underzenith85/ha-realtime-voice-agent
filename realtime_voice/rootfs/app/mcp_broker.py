@@ -8,6 +8,7 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any
 
+from jsonschema import Draft7Validator
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
@@ -17,6 +18,16 @@ from app.config import McpServerConfig
 
 def _slug(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]", "_", value).strip("_").lower()
+
+
+def _validated_schema(schema: Any, server_name: str, tool_name: str) -> dict[str, Any]:
+    if not isinstance(schema, dict) or schema.get("type") != "object":
+        raise ValueError(f"invalid input schema for MCP tool {server_name}.{tool_name}")
+    try:
+        Draft7Validator.check_schema(schema)
+    except Exception as err:
+        raise ValueError(f"invalid input schema for MCP tool {server_name}.{tool_name}") from err
+    return schema
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,19 +55,23 @@ class McpConnection:
 
     async def connect(self) -> None:
         stack = AsyncExitStack()
-        if self.config.transport == "sse":
-            streams = await stack.enter_async_context(
-                sse_client(self.config.url, headers=self.config.headers)
-            )
-        else:
-            streams = await stack.enter_async_context(
-                streamablehttp_client(self.config.url, headers=self.config.headers)
-            )
-        # streamablehttp_client returns a third session-id callback in newer MCP
-        # releases. ClientSession's third positional argument is instead the read
-        # timeout, so only pass the read and write streams here.
-        session = await stack.enter_async_context(ClientSession(streams[0], streams[1]))
-        await session.initialize()
+        try:
+            if self.config.transport == "sse":
+                streams = await stack.enter_async_context(
+                    sse_client(self.config.url, headers=self.config.headers)
+                )
+            else:
+                streams = await stack.enter_async_context(
+                    streamablehttp_client(self.config.url, headers=self.config.headers)
+                )
+            # streamablehttp_client returns a third session-id callback in newer MCP
+            # releases. ClientSession's third positional argument is instead the read
+            # timeout, so only pass the read and write streams here.
+            session = await stack.enter_async_context(ClientSession(streams[0], streams[1]))
+            await session.initialize()
+        except BaseException:
+            await stack.aclose()
+            raise
         self._stack = stack
         self.session = session
 
@@ -79,7 +94,9 @@ class McpBroker:
         await self.refresh()
 
     async def close(self) -> None:
-        for connection in self.connections.values():
+        # MCP transports own AnyIO cancellation scopes. Unwind them in the
+        # reverse order they were entered, just like an AsyncExitStack.
+        for connection in reversed(self.connections.values()):
             await connection.close()
 
     async def refresh(self) -> None:
@@ -101,7 +118,11 @@ class McpBroker:
                     server_name=name,
                     remote_name=tool.name,
                     description=tool.description or f"Tool from {name}",
-                    schema=tool.inputSchema or {"type": "object", "properties": {}},
+                    schema=_validated_schema(
+                        tool.inputSchema or {"type": "object", "properties": {}},
+                        name,
+                        tool.name,
+                    ),
                 )
         self.bindings = bindings
 

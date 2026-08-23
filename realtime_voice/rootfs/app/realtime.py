@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from typing import Any
 
 import aiohttp
@@ -39,7 +40,7 @@ class RealtimeSession:
 
     async def start(self) -> None:
         self.ws = await self.http.ws_connect(
-            f"https://api.openai.com/v1/realtime?model={self.settings.model}",
+            f"{self.settings.openai_realtime_url}?model={self.settings.model}",
             headers={"Authorization": f"Bearer {self.settings.openai_api_key}"},
             heartbeat=20,
         )
@@ -85,8 +86,12 @@ class RealtimeSession:
     async def close(self) -> None:
         if self.reader:
             self.reader.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.reader
+            self.reader = None
         if self.ws:
             await self.ws.close()
+            self.ws = None
 
     async def _send(self, event: dict[str, Any]) -> None:
         if not self.ws:
@@ -120,7 +125,10 @@ class RealtimeSession:
         call_id = event["call_id"]
         try:
             arguments = json.loads(event.get("arguments") or "{}")
-            output = await asyncio.wait_for(self.broker.call(event["name"], arguments), timeout=30)
+            output = await asyncio.wait_for(
+                self.broker.call(event["name"], arguments),
+                timeout=self.settings.tool_timeout_seconds,
+            )
         except Exception as err:  # returned to the model, not hidden in logs
             LOGGER.exception("Tool call failed: %s", event.get("name"))
             output = json.dumps({"error": type(err).__name__, "message": str(err)[:500]})
