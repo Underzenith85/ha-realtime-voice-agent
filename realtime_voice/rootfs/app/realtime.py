@@ -11,6 +11,7 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 import aiohttp
@@ -18,6 +19,7 @@ import aiohttp
 from app.config import Settings
 from app.mcp_broker import McpBroker, ToolBinding
 from app.rate_limit import RateLimiter
+from app.timers import TIMER_TOOLS, TimerManager, VoiceTimer
 
 LOGGER = logging.getLogger(__name__)
 AudioCallback = Callable[[bytes], Awaitable[None]]
@@ -127,6 +129,7 @@ class RealtimeSession:
         on_audio: AudioCallback,
         on_event: EventCallback,
         client_id: str | None = None,
+        timers: TimerManager | None = None,
     ) -> None:
         self.http = http
         self.settings = settings
@@ -134,6 +137,7 @@ class RealtimeSession:
         self.on_audio = on_audio
         self.on_event = on_event
         self.client_id = client_id
+        self.timers = timers
         self.ws: aiohttp.ClientWebSocketResponse | None = None
         self.reader: asyncio.Task[None] | None = None
         self.response_active = False
@@ -197,6 +201,23 @@ class RealtimeSession:
         if websocket:
             await websocket.close()
 
+    async def announce_timer(self, timer: VoiceTimer) -> None:
+        await self.cancel()
+        self.begin_turn()
+        message = f"The {timer.kind} named {timer.label} has completed. Announce it briefly."
+        self.history.set_user(message)
+        await self._send(
+            {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": message}],
+                },
+            }
+        )
+        await self._send({"type": "response.create"})
+
     async def close(self) -> None:
         self._closing = True
         self._connected.set()
@@ -224,6 +245,9 @@ class RealtimeSession:
             "idle_expired": self.idle_expired,
             "history_turns": len(self.history),
             "active_tool_calls": len(self._tool_tasks),
+            "timer_count": (
+                len(self.timers.list(self.client_id)) if self.timers and self.client_id else 0
+            ),
         }
 
     async def _connect(self, *, restore: bool) -> None:
@@ -254,7 +278,14 @@ class RealtimeSession:
             "session": {
                 "type": "realtime",
                 "model": self.settings.model,
-                "instructions": self.settings.instructions,
+                "instructions": self.settings.instructions
+                + (
+                    " Use the voice_timer tools for timers and voice_alarm_create for alarms. "
+                    "List timers before resolving ordinal follow-ups such as 'the second timer'. "
+                    f"The current UTC time is {datetime.now(UTC).isoformat()}."
+                    if self.timers
+                    else ""
+                ),
                 "output_modalities": ["audio"],
                 "audio": {
                     "input": {
@@ -267,7 +298,8 @@ class RealtimeSession:
                         "voice": self.settings.voice,
                     },
                 },
-                "tools": [binding.realtime_definition() for binding in bindings.values()],
+                "tools": [binding.realtime_definition() for binding in bindings.values()]
+                + (TIMER_TOOLS if self.timers else []),
                 "tool_choice": "auto",
                 "parallel_tool_calls": True,
             },
@@ -368,13 +400,18 @@ class RealtimeSession:
                 if not self._tool_rate.allow("session"):
                     raise RuntimeError("tool call rate exceeded")
                 arguments = json.loads(arguments_raw)
-                binding = binding or self.tool_bindings.get(event["name"])
-                if binding is None:
-                    raise KeyError("tool binding is no longer available")
-                output = await asyncio.wait_for(
-                    self.broker.call_binding(binding, arguments, client_id=self.client_id),
-                    timeout=self.settings.tool_timeout_seconds,
-                )
+                if event["name"].startswith(("voice_timer_", "voice_alarm_")):
+                    if not self.timers or not self.client_id:
+                        raise RuntimeError("timer service is unavailable")
+                    output = await self.timers.call(event["name"], self.client_id, arguments)
+                else:
+                    binding = binding or self.tool_bindings.get(event["name"])
+                    if binding is None:
+                        raise KeyError("tool binding is no longer available")
+                    output = await asyncio.wait_for(
+                        self.broker.call_binding(binding, arguments, client_id=self.client_id),
+                        timeout=self.settings.tool_timeout_seconds,
+                    )
             except Exception as err:  # returned to the model, not hidden in logs
                 LOGGER.warning(
                     "Tool call failed: tool=%s error=%s",

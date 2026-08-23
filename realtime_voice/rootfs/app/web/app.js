@@ -90,7 +90,7 @@ function setMcpStatus(mcp) {
 
 function setSessionDiagnostics(diagnostics) {
   const session = diagnostics.session;
-  sessionSummary.textContent = `${diagnostics.session_count} active · age ${session.age_seconds}s · idle ${session.idle_seconds}s · ${session.reconnects} reconnects · ${session.history_turns} turns · ${session.active_tool_calls} tools`;
+  sessionSummary.textContent = `${diagnostics.session_count} active · age ${session.age_seconds}s · idle ${session.idle_seconds}s · ${session.reconnects} reconnects · ${session.history_turns} turns · ${session.active_tool_calls} tools · ${session.timer_count} timers`;
 }
 
 function stopPlayback() {

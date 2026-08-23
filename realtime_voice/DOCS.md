@@ -44,3 +44,10 @@ Buffered mode is recommended. Progressive mode reports request timing and can re
 same response in buffered mode when Home Assistant rejects the initial playback request.
 The latest response targeting an entity stops older playback first. See the repository's
 speaker compatibility matrix for device-specific validation status.
+
+Voice timers and alarms are persisted by the App and scoped to the browser/client that
+created them. The agent can create, list, cancel, pause, and resume timers, and ordered
+list positions support follow-ups such as “cancel the second timer.” Completion speech
+uses that client's saved output route. Disconnected completions wait for reconnect;
+unavailable speakers fall back to browser audio. Overdue timers fire when the App returns
+after a restart.

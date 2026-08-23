@@ -39,6 +39,7 @@ class FakeServices:
         self.openai_connections.append(connection_events)
         awaiting_tool = False
         tool_completed = False
+        timer_completion = False
         async for message in ws:
             if message.type != WSMsgType.TEXT:
                 continue
@@ -79,10 +80,19 @@ class FakeServices:
             ):
                 self.tool_outputs.append(event)
                 tool_completed = True
+            elif (
+                event["type"] == "conversation.item.create"
+                and event.get("item", {}).get("type") == "message"
+                and "has completed" in event["item"]["content"][0].get("text", "")
+            ):
+                timer_completion = True
             elif event["type"] == "response.create" and awaiting_tool and tool_completed:
                 await self._send_response(ws, b"speaker audio", "The kitchen light is on")
                 awaiting_tool = False
                 tool_completed = False
+            elif event["type"] == "response.create" and timer_completion:
+                await self._send_response(ws, b"timer audio", "Your timer is complete")
+                timer_completion = False
         return ws
 
     async def _send_response(
@@ -344,10 +354,11 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
                 event for event in services.openai_events if event["type"] == "session.update"
             )
             tool_names = {tool["name"] for tool in session_update["session"]["tools"]}
-            assert tool_names == {
+            assert {name for name in tool_names if name.startswith("mcp_")} == {
                 "mcp_homeassistant_get_light",
                 "mcp_legacy_get_light",
             }
+            assert "voice_timer_create" in tool_names
 
             @mcp_server.mcp.tool()
             def newly_added() -> str:
@@ -455,6 +466,63 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
             await speaker.close()
             await overlap.close()
             await progressive.close()
+
+
+@pytest.mark.asyncio
+async def test_timer_completion_uses_client_route_and_falls_back_to_browser(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    services = FakeServices()
+    external = web.Application()
+    external.router.add_get("/v1/realtime", services.realtime)
+    external.router.add_post("/api/services/media_player/play_media", services.play_media)
+    external.router.add_post("/api/services/media_player/media_stop", services.stop_media)
+
+    async def fake_encode(pcm: bytes) -> bytes:
+        return b"fake-mp3:" + pcm
+
+    monkeypatch.setattr("app.server.encode_mp3", fake_encode)
+    async with run_aiohttp_app(external) as external_server:
+        base_url = str(external_server.make_url("")).rstrip("/")
+        app = create_app(
+            Settings(
+                openai_api_key="test-key",
+                openai_realtime_url=f"{base_url}/v1/realtime",
+                ha_api_url=base_url,
+                speaker_base_url="http://voice.test:8099",
+                routes_path=str(tmp_path / "routes.json"),
+                timers_path=str(tmp_path / "timers.json"),
+            )
+        )
+        async with TestClient(TestServer(app)) as client:
+            ws = await start_voice_client(client, "timer-client")
+            await ws.send_json(
+                {
+                    "type": "route_set",
+                    "route": {
+                        "sink": "media_player",
+                        "entity_id": "media_player.sonos_beam",
+                        "mode": "buffered",
+                        "announce": True,
+                        "volume": None,
+                    },
+                }
+            )
+            await receive_type(ws, "route")
+            app["voice"].timers.create("timer-client", 1, "Tea")
+            async with asyncio.timeout(5):
+                while not services.play_calls:
+                    await asyncio.sleep(0.01)
+            token = services.play_calls[-1]["media_content_id"].rsplit("/", 1)[-1]
+            response = await client.get(f"/media/{token}")
+            assert await response.read() == b"fake-mp3:timer audio"
+
+            services.fail_next_play = True
+            app["voice"].timers.create("timer-client", 1, "Fallback")
+            assert await receive_type(ws, "audio") == b"timer audio"
+            fallback = await receive_type(ws, "playback_status")
+            assert fallback["mode"] == "browser"
+            await ws.close()
 
 
 @pytest.mark.asyncio
