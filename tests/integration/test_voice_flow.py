@@ -420,6 +420,7 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
                 while not services.play_calls:
                     await asyncio.sleep(0.01)
             assert services.play_calls[0]["entity_id"] == "media_player.sonos_beam"
+            assert services.play_calls[0]["media_content_type"] == "music"
             assert services.play_calls[0]["announce"] is True
             assert services.tool_outputs
             output = json.loads(services.tool_outputs[0]["item"]["output"])
