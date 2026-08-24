@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 import app.speakers
 from app.routes import OutputRoute
-from app.speakers import SpeakerController, SpeakerRequestError
+from app.speakers import SpeakerController, SpeakerPlaybackCancelled, SpeakerRequestError
 
 
 class Response:
@@ -91,6 +91,45 @@ async def test_next_play_waits_for_prior_audio_duration(monkeypatch) -> None:
 
     assert round(max(waits), 2) == 2.35
     assert len(session.requests) == 2
+
+
+async def test_stop_immediately_cancels_queued_wait(monkeypatch) -> None:
+    now = 100.0
+    monkeypatch.setattr(app.speakers.time, "monotonic", lambda: now)
+    session = Session()
+    controller = SpeakerController(session, "http://ha.test", "secret")  # type: ignore[arg-type]
+    route = OutputRoute(sink="media_player", entity_id="media_player.sonos")
+
+    await controller.play(route, "http://voice.test/first", duration_seconds=60)
+    queued = asyncio.create_task(controller.play(route, "http://voice.test/queued"))
+    await asyncio.sleep(0)
+
+    await asyncio.wait_for(controller.stop("media_player.sonos"), timeout=0.1)
+
+    result = (await asyncio.gather(queued, return_exceptions=True))[0]
+    assert isinstance(result, SpeakerPlaybackCancelled)
+    assert [url.rsplit("/", 1)[-1] for url, _ in session.requests] == [
+        "play_media",
+        "media_stop",
+    ]
+
+
+async def test_play_submitted_after_stop_queues_normally(monkeypatch) -> None:
+    now = 100.0
+    monkeypatch.setattr(app.speakers.time, "monotonic", lambda: now)
+    session = Session()
+    controller = SpeakerController(session, "http://ha.test", "secret")  # type: ignore[arg-type]
+    route = OutputRoute(sink="media_player", entity_id="media_player.sonos")
+
+    await controller.play(route, "http://voice.test/first", duration_seconds=60)
+    queued = asyncio.create_task(controller.play(route, "http://voice.test/cancelled"))
+    await asyncio.sleep(0)
+    await controller.stop("media_player.sonos")
+    replacement = await controller.play(route, "http://voice.test/replacement")
+    await asyncio.gather(queued, return_exceptions=True)
+
+    assert replacement.replaced_active_playback is False
+    assert session.requests[-1][1]["media_content_id"] == "http://voice.test/replacement"
 
 
 async def test_speaker_failure_is_actionable_and_redacts_media_token() -> None:
