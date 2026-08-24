@@ -25,6 +25,15 @@ LOGGER = logging.getLogger(__name__)
 AudioCallback = Callable[[bytes], Awaitable[None]]
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
+TERMINAL_UPSTREAM_ERROR_CODES = frozenset(
+    {
+        "insufficient_quota",
+        "invalid_api_key",
+        "organization_deactivated",
+        "project_deactivated",
+    }
+)
+
 
 @dataclass(slots=True)
 class ToolRecord:
@@ -148,6 +157,7 @@ class RealtimeSession:
         self.last_activity = self.created_at
         self.reconnects = 0
         self.idle_expired = False
+        self.terminal_error = False
         self._closing = False
         self._connected = asyncio.Event()
         self._connect_lock = asyncio.Lock()
@@ -337,6 +347,8 @@ class RealtimeSession:
             if self.ws is websocket:
                 self.ws = None
             await websocket.close()
+            if self.terminal_error:
+                return
             await self.on_event({"type": "session.reconnecting"})
             while not self._closing:
                 try:
@@ -380,7 +392,15 @@ class RealtimeSession:
                 if event_type == "response.done":
                     self.response_active = False
                 await self.on_event(event)
-                if event_type == "error" and event.get("error", {}).get("code") in {
+                error_code = event.get("error", {}).get("code")
+                if event_type == "error" and error_code in TERMINAL_UPSTREAM_ERROR_CODES:
+                    self.terminal_error = True
+                    LOGGER.error(
+                        "Realtime session stopped after terminal upstream error: %s", error_code
+                    )
+                    await websocket.close()
+                    return
+                if event_type == "error" and error_code in {
                     "session_expired",
                     "session_expired_error",
                 }:

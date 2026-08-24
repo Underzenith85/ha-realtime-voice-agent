@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.2
+
+- Stop reconnecting after terminal OpenAI account and credential errors, preserving the
+  actionable upstream error in the Web UI instead of entering an endless retry loop.
+
 ## 0.10.1
 
 - Register the Voice PE WebSocket dependency as an ESP-IDF managed component so the

@@ -30,6 +30,7 @@ class FakeServices:
     held_response: asyncio.Event = field(default_factory=asyncio.Event)
     openai_connections: list[list[dict[str, Any]]] = field(default_factory=list)
     fail_next_play: bool = False
+    reject_with_quota_error: bool = False
 
     async def realtime(self, request: web.Request) -> web.WebSocketResponse:
         assert request.headers["Authorization"] == "Bearer test-key"
@@ -47,6 +48,19 @@ class FakeServices:
             event = json.loads(message.data)
             self.openai_events.append(event)
             connection_events.append(event)
+            if event["type"] == "session.update" and self.reject_with_quota_error:
+                await ws.send_json(
+                    {
+                        "type": "error",
+                        "error": {
+                            "type": "insufficient_quota",
+                            "code": "insufficient_quota",
+                            "message": "You have no credits remaining.",
+                        },
+                    }
+                )
+                await ws.close()
+                break
             if event["type"] == "input_audio_buffer.clear":
                 audio.clear()
             elif event["type"] == "input_audio_buffer.append":
@@ -658,6 +672,34 @@ async def test_reconnect_restores_context_and_reports_diagnostics(tmp_path: Any)
             await ws.send_json({"type": "diagnostics_get"})
             reset_diagnostics = await receive_type(ws, "session_diagnostics")
             assert reset_diagnostics["session"]["history_turns"] == 0
+            await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_quota_error_is_terminal_and_does_not_reconnect(tmp_path: Any) -> None:
+    services = FakeServices(reject_with_quota_error=True)
+    external = web.Application()
+    external.router.add_get("/v1/realtime", services.realtime)
+
+    async with run_aiohttp_app(external) as external_server:
+        base_url = str(external_server.make_url("")).rstrip("/")
+        app = create_app(
+            Settings(
+                openai_api_key="test-key",
+                openai_realtime_url=f"{base_url}/v1/realtime",
+                routes_path=str(tmp_path / "routes.json"),
+            )
+        )
+        async with TestClient(TestServer(app)) as client:
+            ws = await start_voice_client(client, "quota-client")
+            error = await receive_type(ws, "error")
+            assert error["error"] == {
+                "type": "insufficient_quota",
+                "code": "insufficient_quota",
+                "message": "You have no credits remaining.",
+            }
+            await asyncio.sleep(0.1)
+            assert len(services.openai_connections) == 1
             await ws.close()
 
 
