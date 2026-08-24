@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.8
+
+- Keep signed speaker media readable for its short TTL and support HTTP byte ranges so
+  Sonos retry and buffering requests do not receive `404 Not Found` after the first GET.
+
 ## 0.10.7
 
 - Add an `.mp3` suffix to signed speaker media URLs so Sonos identifies the stream's

@@ -476,14 +476,36 @@ class VoiceServer:
             raise web.HTTPNotFound()
         response = web.StreamResponse(
             status=200,
-            headers={"Content-Type": "audio/mpeg", "Cache-Control": "no-store"},
+            headers={
+                "Content-Type": "audio/mpeg",
+                "Cache-Control": "no-store",
+                "Accept-Ranges": "bytes",
+            },
         )
         if item.complete.is_set():
             body = b"".join(item.chunks)
+            byte_range = request.http_range
+            if byte_range.start is not None or byte_range.stop is not None:
+                start, stop, _ = byte_range.indices(len(body))
+                if start >= len(body) or start >= stop:
+                    raise web.HTTPRequestRangeNotSatisfiable(
+                        headers={"Content-Range": f"bytes */{len(body)}"}
+                    )
+                ranged = body[start:stop]
+                return web.Response(
+                    status=206,
+                    body=ranged,
+                    content_type="audio/mpeg",
+                    headers={
+                        "Cache-Control": "no-store",
+                        "Accept-Ranges": "bytes",
+                        "Content-Range": f"bytes {start}-{stop - 1}/{len(body)}",
+                    },
+                )
             return web.Response(
                 body=body,
                 content_type="audio/mpeg",
-                headers={"Cache-Control": "no-store"},
+                headers={"Cache-Control": "no-store", "Accept-Ranges": "bytes"},
             )
         await response.prepare(request)
         for chunk in item.chunks:
@@ -506,7 +528,11 @@ class VoiceServer:
         item = self.media.inspect(request.match_info["token"])
         if item is None:
             raise web.HTTPNotFound()
-        headers = {"Content-Type": "audio/mpeg", "Cache-Control": "no-store"}
+        headers = {
+            "Content-Type": "audio/mpeg",
+            "Cache-Control": "no-store",
+            "Accept-Ranges": "bytes",
+        }
         if item.complete.is_set():
             headers["Content-Length"] = str(sum(len(chunk) for chunk in item.chunks))
         return web.Response(status=200, headers=headers)
