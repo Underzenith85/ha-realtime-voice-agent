@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.10
+
+- Queue buffered Sonos replies per speaker using the generated audio duration, allowing
+  the prior turn to finish before Home Assistant receives the next media URL.
+
 ## 0.10.9
 
 - Replace consecutive Sonos media directly instead of issuing `media_stop` before every

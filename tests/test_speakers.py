@@ -1,6 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 
+import app.speakers
 from app.routes import OutputRoute
 from app.speakers import SpeakerController, SpeakerRequestError
 
@@ -43,7 +44,7 @@ async def test_latest_response_replaces_directly_and_preserves_options() -> None
     second = await controller.play(route, "http://voice.test/second")
 
     assert first.replaced_active_playback is False
-    assert second.replaced_active_playback is True
+    assert second.replaced_active_playback is False
     assert len(session.requests) == 2
     assert all(request[0].endswith("/play_media") for request in session.requests)
     assert session.requests[1][1] == {
@@ -68,6 +69,28 @@ async def test_explicit_stop_clears_active_playback() -> None:
     assert result.replaced_active_playback is False
     assert session.requests[-1][0].endswith("/play_media")
     assert session.requests[-1][1]["media_content_id"] == "http://voice.test/second"
+
+
+async def test_next_play_waits_for_prior_audio_duration(monkeypatch) -> None:
+    now = 100.0
+    waits = []
+
+    async def advance(delay: float) -> None:
+        nonlocal now
+        waits.append(delay)
+        now += delay
+
+    monkeypatch.setattr(app.speakers.time, "monotonic", lambda: now)
+    monkeypatch.setattr(app.speakers.asyncio, "sleep", advance)
+    session = Session()
+    controller = SpeakerController(session, "http://ha.test", "secret")  # type: ignore[arg-type]
+    route = OutputRoute(sink="media_player", entity_id="media_player.sonos")
+
+    await controller.play(route, "http://voice.test/first", duration_seconds=2)
+    await controller.play(route, "http://voice.test/second", duration_seconds=1)
+
+    assert round(max(waits), 2) == 2.35
+    assert len(session.requests) == 2
 
 
 async def test_speaker_failure_is_actionable_and_redacts_media_token() -> None:
