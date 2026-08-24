@@ -10,7 +10,7 @@ def test_media_lifecycle() -> None:
     store.finish(item)
 
     assert store.claim(token) is item
-    assert store.claim(token) is None
+    assert store.claim(token) is item
     assert b"".join(item.chunks) == b"onetwo"
     assert item.complete.is_set()
 
@@ -40,4 +40,4 @@ def test_inspection_does_not_consume_media() -> None:
     assert store.inspect(token) is item
     assert store.inspect(token) is item
     assert store.claim(token) is item
-    assert store.inspect(token) is None
+    assert store.inspect(token) is item

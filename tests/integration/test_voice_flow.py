@@ -435,7 +435,13 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
             response = await client.get(f"/media/{token}.mp3")
             assert response.status == 200
             assert await response.read() == b"fake-mp3:speaker audio"
-            assert (await client.get(f"/media/{token}.mp3")).status == 404
+            retry = await client.get(f"/media/{token}.mp3")
+            assert retry.status == 200
+            assert await retry.read() == b"fake-mp3:speaker audio"
+            ranged = await client.get(f"/media/{token}.mp3", headers={"Range": "bytes=5-7"})
+            assert ranged.status == 206
+            assert ranged.headers["Content-Range"] == "bytes 5-7/22"
+            assert await ranged.read() == b"mp3"
 
             await speaker.send_json(
                 {

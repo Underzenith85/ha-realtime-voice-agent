@@ -28,13 +28,11 @@ class MediaStore:
         return token, item
 
     def claim(self, token: str) -> MediaObject | None:
-        item = self._items.pop(token, None)
-        if item is None or item.expires_at < time.monotonic():
-            return None
-        return item
+        """Return media without consuming it so network players may retry the URL."""
+        return self.inspect(token)
 
     def inspect(self, token: str) -> MediaObject | None:
-        """Return metadata without consuming a single-use media object."""
+        """Return unexpired media metadata without consuming the signed URL."""
         item = self._items.get(token)
         if item is None:
             return None
