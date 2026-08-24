@@ -53,18 +53,36 @@ def test_expired_active_stream_is_retained_until_complete(monkeypatch) -> None:
     assert store.inspect(token) is None
 
 
-def test_capacity_evicts_oldest_completed_media() -> None:
+def test_capacity_evicts_oldest_completed_media(monkeypatch) -> None:
+    now = 1000.0
+    monkeypatch.setattr(app.media.time, "monotonic", lambda: now)
     store = MediaStore(max_items=2)
     oldest_token, oldest = store.create()
-    store.finish(oldest)
     retained_token, retained = store.create()
+    now = 1001.0
+    store.finish(retained)
+    now = 1002.0
+    store.finish(oldest)
 
     newest_token, newest = store.create()
 
-    assert store.inspect(oldest_token) is None
-    assert store.inspect(retained_token) is retained
+    assert store.inspect(oldest_token) is oldest
+    assert store.inspect(retained_token) is None
     assert store.inspect(newest_token) is newest
     assert len(store._items) == 2
+
+
+def test_discard_removes_abandoned_media() -> None:
+    store = MediaStore()
+    token, item = store.create()
+    subscriber: asyncio.Queue[bytes | None] = asyncio.Queue()
+    item.subscribers.add(subscriber)
+
+    store.discard(item)
+
+    assert store.inspect(token) is None
+    assert item.complete.is_set()
+    assert subscriber.get_nowait() is None
 
 
 def test_capacity_does_not_evict_active_streams() -> None:

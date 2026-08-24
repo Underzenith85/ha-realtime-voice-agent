@@ -106,6 +106,29 @@ async def test_progressive_playback_owns_encoder_pump_and_cleanup() -> None:
     assert item.complete.is_set()
 
 
+async def test_cancelled_progressive_playback_discards_media() -> None:
+    media = MediaStore(max_items=1)
+    speakers = Speakers()
+    encoder = ProgressiveEncoder()
+    coordinator = SpeakerPlaybackCoordinator(  # type: ignore[arg-type]
+        media,
+        speakers,
+        "http://voice.test:8099",
+        progressive_factory=lambda: encoder,  # type: ignore[arg-type]
+    )
+    route = OutputRoute(sink="media_player", entity_id="media_player.sonos")
+
+    playback = await coordinator.start_progressive(route)
+    await playback.write(b"partial")
+    await playback.cancel()
+
+    media_url = speakers.plays[0][1]
+    token = media_url.rsplit("/", 1)[-1].removesuffix(".mp3")
+    assert media.inspect(token) is None
+    _, replacement = media.create()
+    assert replacement is not None
+
+
 async def test_route_test_browser_noops_and_cancel_delegates() -> None:
     speakers = Speakers()
     coordinator = SpeakerPlaybackCoordinator(  # type: ignore[arg-type]
@@ -122,8 +145,9 @@ async def test_route_test_browser_noops_and_cancel_delegates() -> None:
 
 async def test_failed_progressive_start_cleans_up_encoder() -> None:
     encoder = ProgressiveEncoder()
+    media = MediaStore(max_items=1)
     coordinator = SpeakerPlaybackCoordinator(  # type: ignore[arg-type]
-        MediaStore(),
+        media,
         FailingSpeakers(),
         "http://voice.test:8099",
         progressive_factory=lambda: encoder,  # type: ignore[arg-type]
@@ -138,6 +162,8 @@ async def test_failed_progressive_start_cleans_up_encoder() -> None:
         raise AssertionError("expected progressive playback to fail")
 
     assert encoder.cancelled is True
+    _, replacement = media.create()
+    assert replacement is not None
 
 
 def test_failure_serialization_is_shared_and_sanitized() -> None:

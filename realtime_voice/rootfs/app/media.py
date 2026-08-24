@@ -88,6 +88,16 @@ class MediaStore:
         for queue in tuple(item.subscribers):
             queue.put_nowait(None)
 
+    def discard(self, item: MediaObject) -> None:
+        """Remove an abandoned media object without affecting a replacement."""
+        for token, stored_item in tuple(self._items.items()):
+            if stored_item is item:
+                self._items.pop(token, None)
+                break
+        item.complete.set()
+        for queue in tuple(item.subscribers):
+            queue.put_nowait(None)
+
     def cleanup(self) -> None:
         now = time.monotonic()
         for token, item in tuple(self._items.items()):
@@ -95,11 +105,17 @@ class MediaStore:
                 self._items.pop(token, None)
 
     def _evict_oldest_complete(self) -> bool:
-        for token, item in self._items.items():
-            if item.complete.is_set():
-                self._items.pop(token)
-                return True
-        return False
+        completed = (
+            (item.expires_at, token)
+            for token, item in self._items.items()
+            if item.complete.is_set()
+        )
+        try:
+            _, token = min(completed)
+        except ValueError:
+            return False
+        self._items.pop(token)
+        return True
 
     async def _cleanup_loop(self) -> None:
         while True:
