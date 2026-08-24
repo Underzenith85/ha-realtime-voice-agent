@@ -383,13 +383,29 @@ class VoiceServer:
                             }
                         )
                     except Exception as err:
-                        LOGGER.warning("Route test failed: %s", type(err).__name__)
+                        error = {"type": type(err).__name__, "message": "Playback failed"}
+                        if isinstance(err, SpeakerRequestError):
+                            error.update(
+                                {
+                                    "operation": err.operation,
+                                    "status": err.status,
+                                    "message": err.detail,
+                                }
+                            )
+                            LOGGER.warning(
+                                "Route test failed: operation=%s status=%s detail=%s",
+                                err.operation,
+                                err.status,
+                                err.detail,
+                            )
+                        else:
+                            LOGGER.warning("Route test failed: %s", type(err).__name__)
                         await ws.send_json(
                             {
                                 "type": "route_test_result",
                                 "ok": False,
                                 "route": asdict(candidate),
-                                "error": {"type": type(err).__name__, "message": "Playback failed"},
+                                "error": error,
                             }
                         )
                 elif event.get("type") == "speakers_list" and self.speakers:
@@ -446,7 +462,9 @@ class VoiceServer:
 
     async def _play(self, route: OutputRoute, request: web.Request, token: str):
         assert self.speakers
-        url = f"{self.settings.speaker_base_url.rstrip('/')}/media/{token}"
+        # Sonos derives protocol metadata from the URI as well as HTTP headers.
+        # Keep the MP3 suffix so it does not classify this stream as octet-stream.
+        url = f"{self.settings.speaker_base_url.rstrip('/')}/media/{token}.mp3"
         return await self.speakers.play(route, url)
 
     async def media_stream(self, request: web.Request) -> web.StreamResponse:
@@ -500,8 +518,8 @@ def create_app(settings: Settings) -> web.Application:
     app["voice"] = service
     app.router.add_get("/ws", service.websocket)
     app.router.add_get("/device/ws", service.device_websocket)
-    app.router.add_head("/media/{token}", service.media_metadata)
-    app.router.add_get("/media/{token}", service.media_stream, allow_head=False)
+    app.router.add_head("/media/{token}.mp3", service.media_metadata)
+    app.router.add_get("/media/{token}.mp3", service.media_stream, allow_head=False)
     app.router.add_get("/", lambda request: web.FileResponse(WEB_ROOT / "index.html"))
     app.router.add_static("/static", WEB_ROOT)
     app.on_startup.append(service.start)

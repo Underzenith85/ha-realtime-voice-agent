@@ -87,6 +87,15 @@ class SpeakerController:
         }
         if route.volume is not None:
             data["extra"] = {"volume": route.volume}
+        LOGGER.info(
+            "Requesting speaker playback: entity=%s content_type=%s announce=%s "
+            "volume_override=%s media_url=%s",
+            route.entity_id,
+            data["media_content_type"],
+            route.announce,
+            route.volume is not None,
+            SIGNED_MEDIA_PATTERN.sub("/media/[redacted]", media_url),
+        )
         async with self.session.post(
             f"{self.base_url}/api/services/media_player/play_media",
             headers=self.headers,
