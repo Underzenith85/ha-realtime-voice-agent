@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.6
+
+- Classify signed speaker URLs as `music` for Home Assistant media-player services so
+  Sonos accepts normal playback instead of rejecting the MIME type as invalid content.
+
 ## 0.10.5
 
 - Report sanitized Home Assistant speaker operation, HTTP status, and response detail in

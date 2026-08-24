@@ -80,7 +80,9 @@ class SpeakerController:
         data: dict[str, object] = {
             "entity_id": route.entity_id,
             "media_content_id": media_url,
-            "media_content_type": "audio/mpeg",
+            # HA media_player integrations classify URL playback as music. Sonos
+            # rejects the MIME value audio/mpeg as an invalid content type.
+            "media_content_type": "music",
             "announce": route.announce,
         }
         if route.volume is not None:

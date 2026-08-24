@@ -59,7 +59,7 @@ async def test_latest_response_stops_previous_playback_and_preserves_options() -
     assert session.requests[2][1] == {
         "entity_id": "media_player.sonos",
         "media_content_id": "http://voice.test/second",
-        "media_content_type": "audio/mpeg",
+        "media_content_type": "music",
         "announce": False,
         "extra": {"volume": 0.25},
     }
