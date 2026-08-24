@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.7
+
+- Add an `.mp3` suffix to signed speaker media URLs so Sonos identifies the stream's
+  MIME type correctly, and include sanitized request details in route-test diagnostics.
+
 ## 0.10.6
 
 - Classify signed speaker URLs as `music` for Home Assistant media-player services so

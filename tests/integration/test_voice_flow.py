@@ -426,14 +426,16 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
             output = json.loads(services.tool_outputs[0]["item"]["output"])
             assert output["content"][0]["text"].find("light.kitchen") >= 0
 
-            token = services.play_calls[0]["media_content_id"].rsplit("/", 1)[-1]
-            probe = await client.head(f"/media/{token}")
+            media_url = services.play_calls[0]["media_content_id"]
+            assert media_url.endswith(".mp3")
+            token = media_url.rsplit("/", 1)[-1].removesuffix(".mp3")
+            probe = await client.head(f"/media/{token}.mp3")
             assert probe.status == 200
             assert probe.headers["Content-Type"] == "audio/mpeg"
-            response = await client.get(f"/media/{token}")
+            response = await client.get(f"/media/{token}.mp3")
             assert response.status == 200
             assert await response.read() == b"fake-mp3:speaker audio"
-            assert (await client.get(f"/media/{token}")).status == 404
+            assert (await client.get(f"/media/{token}.mp3")).status == 404
 
             await speaker.send_json(
                 {
@@ -541,8 +543,10 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
             async with asyncio.timeout(5):
                 while len(services.play_calls) < 3:
                     await asyncio.sleep(0.01)
-            progressive_token = services.play_calls[2]["media_content_id"].rsplit("/", 1)[-1]
-            progressive_response = await client.get(f"/media/{progressive_token}")
+            progressive_token = (
+                services.play_calls[2]["media_content_id"].rsplit("/", 1)[-1].removesuffix(".mp3")
+            )
+            progressive_response = await client.get(f"/media/{progressive_token}.mp3")
             assert progressive_response.status == 200
             assert await progressive_response.read() == b"progressive:browser audio"
 
@@ -557,8 +561,10 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
             assert buffered_fallback["mode"] == "buffered"
             assert buffered_fallback["fallback_used"] is True
             await receive_type(progressive, "response.done")
-            fallback_token = services.play_calls[-1]["media_content_id"].rsplit("/", 1)[-1]
-            fallback_response = await client.get(f"/media/{fallback_token}")
+            fallback_token = (
+                services.play_calls[-1]["media_content_id"].rsplit("/", 1)[-1].removesuffix(".mp3")
+            )
+            fallback_response = await client.get(f"/media/{fallback_token}.mp3")
             assert await fallback_response.read() == b"fake-mp3:browser audio"
 
             await browser.close()
@@ -617,8 +623,10 @@ async def test_timer_completion_uses_client_route_and_falls_back_to_browser(
             async with asyncio.timeout(5):
                 while not services.play_calls:
                     await asyncio.sleep(0.01)
-            token = services.play_calls[-1]["media_content_id"].rsplit("/", 1)[-1]
-            response = await client.get(f"/media/{token}")
+            token = (
+                services.play_calls[-1]["media_content_id"].rsplit("/", 1)[-1].removesuffix(".mp3")
+            )
+            response = await client.get(f"/media/{token}.mp3")
             assert await response.read() == b"fake-mp3:timer audio"
 
             services.fail_next_play = True
