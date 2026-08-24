@@ -325,9 +325,7 @@ class VoiceServer:
                     await realtime.cancel()
                     realtime.begin_turn()
                     if route.entity_id and self.playback:
-                        await self.playback.cancel(
-                            route.entity_id, stop_active=was_responding
-                        )
+                        await self.playback.cancel(route.entity_id, stop_active=was_responding)
                 elif event.get("type") == "ptt_stop":
                     await realtime.commit()
                 elif event.get("type") == "cancel":
