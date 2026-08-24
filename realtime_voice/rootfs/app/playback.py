@@ -32,6 +32,8 @@ class ProgressivePlayback:
     encoder: ProgressiveMp3Encoder
     reader: asyncio.Task[None]
     result: PlaybackResult
+    media: MediaStore
+    item: MediaObject
 
     async def write(self, chunk: bytes) -> None:
         await self.encoder.write(chunk)
@@ -41,10 +43,13 @@ class ProgressivePlayback:
         await self.reader
 
     async def cancel(self) -> None:
-        await self.encoder.cancel()
-        if not self.reader.done():
-            self.reader.cancel()
-        await asyncio.gather(self.reader, return_exceptions=True)
+        try:
+            await self.encoder.cancel()
+        finally:
+            if not self.reader.done():
+                self.reader.cancel()
+            await asyncio.gather(self.reader, return_exceptions=True)
+            self.media.discard(self.item)
 
 
 class SpeakerPlaybackCoordinator:
@@ -83,12 +88,21 @@ class SpeakerPlaybackCoordinator:
         try:
             result = await self.speakers.play(route, self._media_url(token))
         except BaseException:
-            await encoder.cancel()
-            if not reader.done():
-                reader.cancel()
-            await asyncio.gather(reader, return_exceptions=True)
+            try:
+                await encoder.cancel()
+            finally:
+                if not reader.done():
+                    reader.cancel()
+                await asyncio.gather(reader, return_exceptions=True)
+                self.media.discard(item)
             raise
-        return ProgressivePlayback(encoder=encoder, reader=reader, result=result)
+        return ProgressivePlayback(
+            encoder=encoder,
+            reader=reader,
+            result=result,
+            media=self.media,
+            item=item,
+        )
 
     async def test_output(self, route: OutputRoute) -> PlaybackResult | None:
         if route.sink != "media_player":
@@ -127,9 +141,13 @@ class SpeakerPlaybackCoordinator:
         return error
 
     async def _pump(self, encoder: ProgressiveMp3Encoder, item: MediaObject) -> None:
-        async for chunk in encoder.chunks():
-            self.media.append(item, chunk)
-        self.media.finish(item)
+        try:
+            async for chunk in encoder.chunks():
+                self.media.append(item, chunk)
+            self.media.finish(item)
+        except BaseException:
+            self.media.discard(item)
+            raise
 
     def _publish_complete(self, encoded: bytes) -> str:
         token, item = self.media.create()

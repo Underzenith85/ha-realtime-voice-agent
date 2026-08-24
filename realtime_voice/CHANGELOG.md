@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.12
+
+- Proactively expire completed signed speaker media, cap the cache with oldest-completed
+  eviction, and preserve active progressive streams until they finish.
+
 ## 0.10.11
 
 - Extract buffered, progressive, cancellation, route-test, media-publication, and

@@ -85,11 +85,11 @@ class VoiceServer:
         except Exception as err:
             LOGGER.warning("HA-managed MCP API discovery unavailable: %s", type(err).__name__)
         await self.broker.start()
+        await self.media.start()
 
     async def stop(self, app: web.Application) -> None:
         await asyncio.gather(*(session.close() for session in tuple(self.sessions)))
-        await self.broker.close()
-        await self.timers.close()
+        await asyncio.gather(self.broker.close(), self.timers.close(), self.media.close())
         if self.http:
             await self.http.close()
 
