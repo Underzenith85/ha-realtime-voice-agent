@@ -115,8 +115,8 @@ class SpeakerPlaybackCoordinator:
             duration_seconds=len(ROUTE_TEST_PCM) / PCM_BYTES_PER_SECOND,
         )
 
-    async def cancel(self, entity_id: str) -> None:
-        await self.speakers.stop(entity_id)
+    async def cancel(self, entity_id: str, *, stop_active: bool = True) -> None:
+        await self.speakers.stop(entity_id, stop_active=stop_active)
 
     @staticmethod
     def failure(err: Exception, context: str) -> dict[str, object]:

@@ -28,6 +28,10 @@ class SpeakerRequestError(RuntimeError):
         super().__init__(f"{operation} failed with HTTP {status}: {self.detail}")
 
 
+class SpeakerPlaybackCancelled(RuntimeError):
+    """Playback cancelled before its queued speaker request was submitted."""
+
+
 @dataclass(frozen=True, slots=True)
 class PlaybackResult:
     request_latency_ms: int
@@ -40,6 +44,7 @@ class SpeakerController:
         self.base_url = base_url.rstrip("/")
         self.headers = {"Authorization": f"Bearer {token}"}
         self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._cancel_events: defaultdict[str, asyncio.Event] = defaultdict(asyncio.Event)
         self._active: set[str] = set()
         self._ready_at: defaultdict[str, float] = defaultdict(float)
 
@@ -62,7 +67,10 @@ class SpeakerController:
         self, route: OutputRoute, media_url: str, duration_seconds: float = 0
     ) -> PlaybackResult:
         assert route.entity_id
+        cancel_event = self._cancel_events[route.entity_id]
         async with self._locks[route.entity_id]:
+            if cancel_event.is_set():
+                raise SpeakerPlaybackCancelled
             started = time.monotonic()
             remaining = max(0.0, self._ready_at[route.entity_id] - started)
             if remaining:
@@ -71,7 +79,21 @@ class SpeakerController:
                     remaining * 1000,
                     route.entity_id,
                 )
-                await asyncio.sleep(remaining)
+                sleep = asyncio.create_task(asyncio.sleep(remaining))
+                cancelled = asyncio.create_task(cancel_event.wait())
+                try:
+                    done, _ = await asyncio.wait(
+                        {sleep, cancelled}, return_when=asyncio.FIRST_COMPLETED
+                    )
+                finally:
+                    for task in (sleep, cancelled):
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(sleep, cancelled, return_exceptions=True)
+                if cancelled in done:
+                    raise SpeakerPlaybackCancelled
+            if cancel_event.is_set():
+                raise SpeakerPlaybackCancelled
             await self._play_request(route, media_url)
             self._active.add(route.entity_id)
             if duration_seconds > 0:
@@ -110,10 +132,17 @@ class SpeakerController:
         ) as response:
             await self._check_response(response, "play_media")
 
-    async def stop(self, entity_id: str) -> None:
+    async def stop(self, entity_id: str, *, stop_active: bool = True) -> None:
+        # Wake queued plays before taking the lock they are holding during their
+        # estimated playback wait. A fresh event lets playback submitted after
+        # this cancellation queue normally behind the stop request.
+        self._cancel_events[entity_id].set()
+        self._cancel_events[entity_id] = asyncio.Event()
         async with self._locks[entity_id]:
-            await self._stop_request(entity_id)
-            self._active.discard(entity_id)
+            if stop_active and entity_id in self._active:
+                await self._stop_request(entity_id)
+            if stop_active:
+                self._active.discard(entity_id)
             self._ready_at.pop(entity_id, None)
 
     async def _stop_request(self, entity_id: str) -> None:

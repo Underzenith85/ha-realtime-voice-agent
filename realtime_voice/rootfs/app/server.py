@@ -25,7 +25,7 @@ from app.protocol import parse_hello
 from app.rate_limit import RateLimiter
 from app.realtime import RealtimeSession
 from app.routes import OutputRoute, RouteStore
-from app.speakers import SpeakerController
+from app.speakers import SpeakerController, SpeakerPlaybackCancelled
 from app.timers import TimerManager
 
 LOGGER = logging.getLogger(__name__)
@@ -186,6 +186,9 @@ class VoiceServer:
                             ),
                         }
                     )
+                except SpeakerPlaybackCancelled:
+                    await cancel_progressive()
+                    return
                 except Exception as err:
                     await cancel_progressive()
                     if not current.progressive_fallback:
@@ -230,6 +233,8 @@ class VoiceServer:
                                 ),
                             }
                         )
+                    except SpeakerPlaybackCancelled:
+                        progressive_failed = False
                     except Exception as err:
                         assert self.playback
                         error = self.playback.failure(err, "Speaker playback")
@@ -319,12 +324,17 @@ class VoiceServer:
                     was_responding = realtime.response_active
                     await realtime.cancel()
                     realtime.begin_turn()
-                    if was_responding and route.entity_id and self.playback:
-                        await self.playback.cancel(route.entity_id)
+                    if route.entity_id and self.playback:
+                        await self.playback.cancel(route.entity_id, stop_active=was_responding)
                 elif event.get("type") == "ptt_stop":
                     await realtime.commit()
                 elif event.get("type") == "cancel":
+                    await cancel_progressive()
+                    progressive_failed = False
+                    pcm.clear()
                     await realtime.cancel()
+                    if route.entity_id and self.playback:
+                        await self.playback.cancel(route.entity_id)
                 elif event.get("type") == "route_set":
                     route = OutputRoute(**event["route"]).validate()
                     self.routes.set(hello.client_id, route)
