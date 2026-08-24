@@ -40,9 +40,7 @@ class MediaStore:
         """Start proactive expiration for this store."""
         if self._cleanup_task is not None and not self._cleanup_task.done():
             return
-        self._cleanup_task = asyncio.create_task(
-            self._cleanup_loop(), name="media-store-cleanup"
-        )
+        self._cleanup_task = asyncio.create_task(self._cleanup_loop(), name="media-store-cleanup")
 
     async def close(self) -> None:
         """Stop proactive expiration and wait for its task to finish."""
