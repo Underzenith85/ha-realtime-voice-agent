@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.5
+
+- Report sanitized Home Assistant speaker operation, HTTP status, and response detail in
+  App logs and the Web UI while redacting signed media tokens.
+
 ## 0.10.4
 
 - Continue Sonos and other speaker playback when Home Assistant rejects a best-effort
