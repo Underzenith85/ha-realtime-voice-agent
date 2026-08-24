@@ -426,6 +426,9 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
             assert output["content"][0]["text"].find("light.kitchen") >= 0
 
             token = services.play_calls[0]["media_content_id"].rsplit("/", 1)[-1]
+            probe = await client.head(f"/media/{token}")
+            assert probe.status == 200
+            assert probe.headers["Content-Type"] == "audio/mpeg"
             response = await client.get(f"/media/{token}")
             assert response.status == 200
             assert await response.read() == b"fake-mp3:speaker audio"
