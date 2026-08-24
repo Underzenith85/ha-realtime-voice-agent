@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.3
+
+- Allow media players such as Sonos to probe signed audio URLs with `HEAD` without
+  consuming the single-use token before the subsequent audio `GET` request.
+
 ## 0.10.2
 
 - Stop reconnecting after terminal OpenAI account and credential errors, preserving the

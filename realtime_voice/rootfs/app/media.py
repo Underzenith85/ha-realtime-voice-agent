@@ -33,6 +33,16 @@ class MediaStore:
             return None
         return item
 
+    def inspect(self, token: str) -> MediaObject | None:
+        """Return metadata without consuming a single-use media object."""
+        item = self._items.get(token)
+        if item is None:
+            return None
+        if item.expires_at < time.monotonic():
+            self._items.pop(token, None)
+            return None
+        return item
+
     def append(self, item: MediaObject, chunk: bytes) -> None:
         item.chunks.append(chunk)
         for queue in tuple(item.subscribers):

@@ -29,3 +29,15 @@ def test_expired_media_token_is_removed(monkeypatch) -> None:
 
     assert store.claim(token) is None
     assert token not in store._items
+
+
+def test_inspection_does_not_consume_media() -> None:
+    store = MediaStore()
+    token, item = store.create()
+    store.append(item, b"audio")
+    store.finish(item)
+
+    assert store.inspect(token) is item
+    assert store.inspect(token) is item
+    assert store.claim(token) is item
+    assert store.inspect(token) is None

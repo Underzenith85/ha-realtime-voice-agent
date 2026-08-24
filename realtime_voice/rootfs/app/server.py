@@ -464,6 +464,19 @@ class VoiceServer:
         await response.write_eof()
         return response
 
+    async def media_metadata(self, request: web.Request) -> web.StreamResponse:
+        """Answer player probes without consuming the single-use audio URL."""
+        peer = request.remote or "unknown"
+        if not self.media_rate.allow(peer):
+            raise web.HTTPTooManyRequests(text="media request rate exceeded")
+        item = self.media.inspect(request.match_info["token"])
+        if item is None:
+            raise web.HTTPNotFound()
+        headers = {"Content-Type": "audio/mpeg", "Cache-Control": "no-store"}
+        if item.complete.is_set():
+            headers["Content-Length"] = str(sum(len(chunk) for chunk in item.chunks))
+        return web.Response(status=200, headers=headers)
+
 
 def create_app(settings: Settings) -> web.Application:
     service = VoiceServer(settings)
@@ -471,7 +484,8 @@ def create_app(settings: Settings) -> web.Application:
     app["voice"] = service
     app.router.add_get("/ws", service.websocket)
     app.router.add_get("/device/ws", service.device_websocket)
-    app.router.add_get("/media/{token}", service.media_stream)
+    app.router.add_head("/media/{token}", service.media_metadata)
+    app.router.add_get("/media/{token}", service.media_stream, allow_head=False)
     app.router.add_get("/", lambda request: web.FileResponse(WEB_ROOT / "index.html"))
     app.router.add_static("/static", WEB_ROOT)
     app.on_startup.append(service.start)
