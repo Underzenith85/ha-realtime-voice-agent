@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.4
+
+- Continue Sonos and other speaker playback when Home Assistant rejects a best-effort
+  stop for a prior response that has already ended.
+
 ## 0.10.3
 
 - Allow media players such as Sonos to probe signed audio URLs with `HEAD` without
