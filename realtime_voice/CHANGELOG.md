@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.11
+
+- Extract buffered, progressive, cancellation, route-test, media-publication, and
+  failure-handling behavior into a dedicated speaker playback coordinator.
+
 ## 0.10.10
 
 - Queue buffered Sonos replies per speaker using the generated audio duration, allowing

@@ -9,7 +9,6 @@ import json
 import logging
 import os
 import time
-from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -20,12 +19,13 @@ from app.config import HardwareClientConfig, Settings
 from app.encoder import ProgressiveMp3Encoder, encode_mp3
 from app.ha_apis import discover_managed_mcp_configs
 from app.mcp_broker import McpBroker
-from app.media import MediaObject, MediaStore
+from app.media import MediaStore
+from app.playback import ProgressivePlayback, SpeakerPlaybackCoordinator
 from app.protocol import parse_hello
 from app.rate_limit import RateLimiter
 from app.realtime import RealtimeSession
 from app.routes import OutputRoute, RouteStore
-from app.speakers import SpeakerController, SpeakerRequestError
+from app.speakers import SpeakerController
 from app.timers import TimerManager
 
 LOGGER = logging.getLogger(__name__)
@@ -62,6 +62,7 @@ class VoiceServer:
         self.timers = TimerManager(settings.timers_path)
         self.http = None
         self.speakers = None
+        self.playback = None
         self.hardware_clients = {client.client_id: client for client in settings.hardware_clients}
 
     async def start(self, app: web.Application) -> None:
@@ -70,6 +71,13 @@ class VoiceServer:
         self.http = aiohttp.ClientSession()
         token = os.getenv("SUPERVISOR_TOKEN", "")
         self.speakers = SpeakerController(self.http, self.settings.ha_api_url, token)
+        self.playback = SpeakerPlaybackCoordinator(
+            self.media,
+            self.speakers,
+            self.settings.speaker_base_url,
+            encode=encode_mp3,
+            progressive_factory=ProgressiveMp3Encoder,
+        )
         await self.timers.start()
         try:
             managed = await discover_managed_mcp_configs(self.http, self.settings.ha_api_url, token)
@@ -143,25 +151,17 @@ class VoiceServer:
             ).validate()
             self.routes.set(hello.client_id, route)
         pcm = bytearray()
-        progressive: ProgressiveMp3Encoder | None = None
-        progressive_item: MediaObject | None = None
-        progressive_reader: asyncio.Task[None] | None = None
+        progressive: ProgressivePlayback | None = None
         progressive_failed = False
 
         async def cancel_progressive() -> None:
-            nonlocal progressive, progressive_item, progressive_reader
+            nonlocal progressive
             if progressive:
                 await progressive.cancel()
-            if progressive_reader:
-                progressive_reader.cancel()
-                with suppress(asyncio.CancelledError):
-                    await progressive_reader
             progressive = None
-            progressive_item = None
-            progressive_reader = None
 
         async def on_audio(chunk: bytes) -> None:
-            nonlocal progressive, progressive_item, progressive_reader, progressive_failed
+            nonlocal progressive, progressive_failed
             current = self.routes.get(hello.client_id)
             if current.sink == "browser":
                 await ws.send_bytes(chunk)
@@ -173,26 +173,17 @@ class VoiceServer:
             if progressive_failed:
                 return
             if progressive is None:
-                progressive = ProgressiveMp3Encoder()
-                await progressive.start()
-                token, progressive_item = self.media.create()
-                active_encoder = progressive
-                active_item = progressive_item
-
-                async def pump() -> None:
-                    async for encoded in active_encoder.chunks():
-                        self.media.append(active_item, encoded)
-                    self.media.finish(active_item)
-
-                progressive_reader = asyncio.create_task(pump())
                 try:
-                    result = await self._play(current, request, token)
+                    assert self.playback
+                    progressive = await self.playback.start_progressive(current)
                     await ws.send_json(
                         {
                             "type": "playback_status",
                             "mode": "progressive",
-                            "request_latency_ms": result.request_latency_ms,
-                            "replaced_active_playback": result.replaced_active_playback,
+                            "request_latency_ms": progressive.result.request_latency_ms,
+                            "replaced_active_playback": (
+                                progressive.result.replaced_active_playback
+                            ),
                         }
                     )
                 except Exception as err:
@@ -200,20 +191,21 @@ class VoiceServer:
                     if not current.progressive_fallback:
                         raise
                     progressive_failed = True
+                    assert self.playback
                     await ws.send_json(
                         {
                             "type": "playback_status",
                             "mode": "progressive",
                             "ok": False,
                             "fallback": "buffered",
-                            "error": {"type": type(err).__name__},
+                            "error": self.playback.failure(err, "Progressive playback"),
                         }
                     )
                     return
             await progressive.write(chunk)
 
         async def on_event(event: dict[str, Any]) -> None:
-            nonlocal progressive, progressive_item, progressive_reader, progressive_failed
+            nonlocal progressive, progressive_failed
             if event["type"] == "response.output_audio.done":
                 current = self.routes.get(hello.client_id)
                 if (
@@ -222,46 +214,25 @@ class VoiceServer:
                     and pcm
                 ):
                     raw_audio = bytes(pcm)
-                    encoded = await encode_mp3(raw_audio)
                     pcm.clear()
-                    token, item = self.media.create()
-                    self.media.append(item, encoded)
-                    self.media.finish(item)
                     try:
-                        result = await self._play(
-                            current,
-                            request,
-                            token,
-                            duration_seconds=len(raw_audio) / (24_000 * 2),
-                        )
+                        assert self.playback
+                        buffered = await self.playback.play_buffered(current, raw_audio)
                         await ws.send_json(
                             {
                                 "type": "playback_status",
                                 "mode": "buffered",
                                 "ok": True,
                                 "fallback_used": progressive_failed,
-                                "request_latency_ms": result.request_latency_ms,
-                                "replaced_active_playback": result.replaced_active_playback,
+                                "request_latency_ms": buffered.result.request_latency_ms,
+                                "replaced_active_playback": (
+                                    buffered.result.replaced_active_playback
+                                ),
                             }
                         )
                     except Exception as err:
-                        error = {"type": type(err).__name__}
-                        if isinstance(err, SpeakerRequestError):
-                            error.update(
-                                {
-                                    "operation": err.operation,
-                                    "status": err.status,
-                                    "message": err.detail,
-                                }
-                            )
-                            LOGGER.warning(
-                                "Speaker playback failed: operation=%s status=%s detail=%s",
-                                err.operation,
-                                err.status,
-                                err.detail,
-                            )
-                        else:
-                            LOGGER.warning("Speaker playback failed: %s", type(err).__name__)
+                        assert self.playback
+                        error = self.playback.failure(err, "Speaker playback")
                         await ws.send_bytes(raw_audio)
                         await ws.send_json(
                             {
@@ -275,11 +246,7 @@ class VoiceServer:
                     progressive_failed = False
                 elif progressive:
                     await progressive.finish()
-                    if progressive_reader:
-                        await progressive_reader
                     progressive = None
-                    progressive_item = None
-                    progressive_reader = None
                     pcm.clear()
             safe = {
                 key: event[key]
@@ -352,8 +319,8 @@ class VoiceServer:
                     was_responding = realtime.response_active
                     await realtime.cancel()
                     realtime.begin_turn()
-                    if was_responding and route.entity_id and self.speakers:
-                        await self.speakers.stop(route.entity_id)
+                    if was_responding and route.entity_id and self.playback:
+                        await self.playback.cancel(route.entity_id)
                 elif event.get("type") == "ptt_stop":
                     await realtime.commit()
                 elif event.get("type") == "cancel":
@@ -365,19 +332,8 @@ class VoiceServer:
                 elif event.get("type") == "route_test":
                     candidate = OutputRoute(**event["route"]).validate()
                     try:
-                        if candidate.sink == "media_player":
-                            encoded = await encode_mp3(b"\0" * 12_000)
-                            token, item = self.media.create()
-                            self.media.append(item, encoded)
-                            self.media.finish(item)
-                            playback = await self._play(
-                                candidate,
-                                request,
-                                token,
-                                duration_seconds=12_000 / (24_000 * 2),
-                            )
-                        else:
-                            playback = None
+                        assert self.playback
+                        playback = await self.playback.test_output(candidate)
                         await ws.send_json(
                             {
                                 "type": "route_test_result",
@@ -393,23 +349,9 @@ class VoiceServer:
                             }
                         )
                     except Exception as err:
-                        error = {"type": type(err).__name__, "message": "Playback failed"}
-                        if isinstance(err, SpeakerRequestError):
-                            error.update(
-                                {
-                                    "operation": err.operation,
-                                    "status": err.status,
-                                    "message": err.detail,
-                                }
-                            )
-                            LOGGER.warning(
-                                "Route test failed: operation=%s status=%s detail=%s",
-                                err.operation,
-                                err.status,
-                                err.detail,
-                            )
-                        else:
-                            LOGGER.warning("Route test failed: %s", type(err).__name__)
+                        assert self.playback
+                        error = self.playback.failure(err, "Route test")
+                        error.setdefault("message", "Playback failed")
                         await ws.send_json(
                             {
                                 "type": "route_test_result",
@@ -469,19 +411,6 @@ class VoiceServer:
             "idle_expirations": self.idle_expirations,
             "session": current.diagnostics(),
         }
-
-    async def _play(
-        self,
-        route: OutputRoute,
-        request: web.Request,
-        token: str,
-        duration_seconds: float = 0,
-    ):
-        assert self.speakers
-        # Sonos derives protocol metadata from the URI as well as HTTP headers.
-        # Keep the MP3 suffix so it does not classify this stream as octet-stream.
-        url = f"{self.settings.speaker_base_url.rstrip('/')}/media/{token}.mp3"
-        return await self.speakers.play(route, url, duration_seconds)
 
     async def media_stream(self, request: web.Request) -> web.StreamResponse:
         peer = request.remote or "unknown"
