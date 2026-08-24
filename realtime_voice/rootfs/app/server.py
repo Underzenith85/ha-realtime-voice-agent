@@ -228,7 +228,12 @@ class VoiceServer:
                     self.media.append(item, encoded)
                     self.media.finish(item)
                     try:
-                        result = await self._play(current, request, token)
+                        result = await self._play(
+                            current,
+                            request,
+                            token,
+                            duration_seconds=len(raw_audio) / (24_000 * 2),
+                        )
                         await ws.send_json(
                             {
                                 "type": "playback_status",
@@ -365,7 +370,12 @@ class VoiceServer:
                             token, item = self.media.create()
                             self.media.append(item, encoded)
                             self.media.finish(item)
-                            playback = await self._play(candidate, request, token)
+                            playback = await self._play(
+                                candidate,
+                                request,
+                                token,
+                                duration_seconds=12_000 / (24_000 * 2),
+                            )
                         else:
                             playback = None
                         await ws.send_json(
@@ -460,12 +470,18 @@ class VoiceServer:
             "session": current.diagnostics(),
         }
 
-    async def _play(self, route: OutputRoute, request: web.Request, token: str):
+    async def _play(
+        self,
+        route: OutputRoute,
+        request: web.Request,
+        token: str,
+        duration_seconds: float = 0,
+    ):
         assert self.speakers
         # Sonos derives protocol metadata from the URI as well as HTTP headers.
         # Keep the MP3 suffix so it does not classify this stream as octet-stream.
         url = f"{self.settings.speaker_base_url.rstrip('/')}/media/{token}.mp3"
-        return await self.speakers.play(route, url)
+        return await self.speakers.play(route, url, duration_seconds)
 
     async def media_stream(self, request: web.Request) -> web.StreamResponse:
         peer = request.remote or "unknown"

@@ -15,6 +15,7 @@ from app.routes import OutputRoute
 
 LOGGER = logging.getLogger(__name__)
 SIGNED_MEDIA_PATTERN = re.compile(r"/media/[A-Za-z0-9_-]+")
+PLAYBACK_PADDING_SECONDS = 0.35
 
 
 class SpeakerRequestError(RuntimeError):
@@ -40,6 +41,7 @@ class SpeakerController:
         self.headers = {"Authorization": f"Bearer {token}"}
         self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._active: set[str] = set()
+        self._ready_at: defaultdict[str, float] = defaultdict(float)
 
     async def list_speakers(self) -> list[dict[str, str]]:
         async with self.session.get(
@@ -56,18 +58,29 @@ class SpeakerController:
             if state["entity_id"].startswith("media_player.")
         ]
 
-    async def play(self, route: OutputRoute, media_url: str) -> PlaybackResult:
+    async def play(
+        self, route: OutputRoute, media_url: str, duration_seconds: float = 0
+    ) -> PlaybackResult:
         assert route.entity_id
         async with self._locks[route.entity_id]:
-            replaced = route.entity_id in self._active
             started = time.monotonic()
-            # play_media replaces the current URI atomically. Sending media_stop first
-            # adds a gap and can race with Sonos buffering on consecutive turns.
+            remaining = max(0.0, self._ready_at[route.entity_id] - started)
+            if remaining:
+                LOGGER.info(
+                    "Waiting %.0fms for prior speaker playback: entity=%s",
+                    remaining * 1000,
+                    route.entity_id,
+                )
+                await asyncio.sleep(remaining)
             await self._play_request(route, media_url)
             self._active.add(route.entity_id)
+            if duration_seconds > 0:
+                self._ready_at[route.entity_id] = (
+                    time.monotonic() + duration_seconds + PLAYBACK_PADDING_SECONDS
+                )
             return PlaybackResult(
                 request_latency_ms=round((time.monotonic() - started) * 1000),
-                replaced_active_playback=replaced,
+                replaced_active_playback=False,
             )
 
     async def _play_request(self, route: OutputRoute, media_url: str) -> None:
@@ -101,6 +114,7 @@ class SpeakerController:
         async with self._locks[entity_id]:
             await self._stop_request(entity_id)
             self._active.discard(entity_id)
+            self._ready_at.pop(entity_id, None)
 
     async def _stop_request(self, entity_id: str) -> None:
         async with self.session.post(
