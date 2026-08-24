@@ -3,12 +3,20 @@ from contextlib import asynccontextmanager
 
 import aiohttp
 from app.routes import OutputRoute
-from app.speakers import SpeakerController
+from app.speakers import SpeakerController, SpeakerRequestError
 
 
 class Response:
     def raise_for_status(self) -> None:
         return None
+
+
+class RejectedResponse:
+    status = 500
+    reason = "Internal Server Error"
+
+    async def text(self) -> str:
+        return "Failed URL http://voice.test/media/sensitive-token: UPnP 714"
 
 
 class Session:
@@ -68,3 +76,14 @@ async def test_rejected_stale_stop_does_not_suppress_new_playback() -> None:
     assert result.replaced_active_playback is True
     assert session.requests[-1][0].endswith("/play_media")
     assert session.requests[-1][1]["media_content_id"] == "http://voice.test/second"
+
+
+async def test_speaker_failure_is_actionable_and_redacts_media_token() -> None:
+    try:
+        await SpeakerController._check_response(RejectedResponse(), "play_media")  # type: ignore[arg-type]
+    except SpeakerRequestError as err:
+        assert err.operation == "play_media"
+        assert err.status == 500
+        assert err.detail == "Failed URL http://voice.test/media/[redacted]: UPnP 714"
+    else:
+        raise AssertionError("expected SpeakerRequestError")

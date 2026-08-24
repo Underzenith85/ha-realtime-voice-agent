@@ -32,3 +32,4 @@ def test_route_test_cancel_reset_and_phase_diagnostics_are_present() -> None:
         assert f'id="{element_id}"' in html
     for phase in ("listening", "thinking", "tool use", "speaking", "reconnecting", "error"):
         assert phase in javascript
+    assert "message.error?.message" in javascript

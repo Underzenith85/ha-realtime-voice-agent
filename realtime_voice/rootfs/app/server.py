@@ -25,7 +25,7 @@ from app.protocol import parse_hello
 from app.rate_limit import RateLimiter
 from app.realtime import RealtimeSession
 from app.routes import OutputRoute, RouteStore
-from app.speakers import SpeakerController
+from app.speakers import SpeakerController, SpeakerRequestError
 from app.timers import TimerManager
 
 LOGGER = logging.getLogger(__name__)
@@ -240,7 +240,23 @@ class VoiceServer:
                             }
                         )
                     except Exception as err:
-                        LOGGER.warning("Speaker playback failed: %s", type(err).__name__)
+                        error = {"type": type(err).__name__}
+                        if isinstance(err, SpeakerRequestError):
+                            error.update(
+                                {
+                                    "operation": err.operation,
+                                    "status": err.status,
+                                    "message": err.detail,
+                                }
+                            )
+                            LOGGER.warning(
+                                "Speaker playback failed: operation=%s status=%s detail=%s",
+                                err.operation,
+                                err.status,
+                                err.detail,
+                            )
+                        else:
+                            LOGGER.warning("Speaker playback failed: %s", type(err).__name__)
                         await ws.send_bytes(raw_audio)
                         await ws.send_json(
                             {
@@ -248,7 +264,7 @@ class VoiceServer:
                                 "mode": "browser",
                                 "ok": True,
                                 "fallback_used": True,
-                                "error": {"type": type(err).__name__},
+                                "error": error,
                             }
                         )
                     progressive_failed = False

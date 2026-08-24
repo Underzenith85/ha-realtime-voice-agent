@@ -188,7 +188,8 @@ function connect() {
       testRoute.disabled = false;
     } else if (message.type === "playback_status") {
       const fallback = message.fallback_used ? " · progressive fallback used" : message.fallback ? ` · retrying as ${message.fallback}` : "";
-      routeResult.textContent = `${message.mode} playback${message.ok === false ? " failed" : " started"}${fallback}${message.request_latency_ms === undefined ? "" : ` · ${message.request_latency_ms} ms request`}`;
+      const playbackError = message.error?.message ? ` · ${message.error.operation || "request"} HTTP ${message.error.status || "error"}: ${message.error.message}` : "";
+      routeResult.textContent = `${message.mode} playback${message.ok === false ? " failed" : " started"}${fallback}${message.request_latency_ms === undefined ? "" : ` · ${message.request_latency_ms} ms request`}${playbackError}`;
     } else if (message.type === "mcp_status") {
       setMcpStatus(message.mcp);
       refreshTools.disabled = false;

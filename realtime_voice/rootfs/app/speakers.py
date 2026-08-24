@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -13,6 +14,17 @@ import aiohttp
 from app.routes import OutputRoute
 
 LOGGER = logging.getLogger(__name__)
+SIGNED_MEDIA_PATTERN = re.compile(r"/media/[A-Za-z0-9_-]+")
+
+
+class SpeakerRequestError(RuntimeError):
+    """A sanitized Home Assistant speaker-service failure."""
+
+    def __init__(self, operation: str, status: int, detail: str) -> None:
+        self.operation = operation
+        self.status = status
+        self.detail = SIGNED_MEDIA_PATTERN.sub("/media/[redacted]", detail)[:300]
+        super().__init__(f"{operation} failed with HTTP {status}: {self.detail}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +63,7 @@ class SpeakerController:
             if replaced:
                 try:
                     await self._stop_request(route.entity_id)
-                except aiohttp.ClientError as err:
+                except (aiohttp.ClientError, SpeakerRequestError) as err:
                     # Short announcements may already be idle when the next turn starts.
                     # A rejected best-effort stop must not suppress the newer response.
                     LOGGER.info("Ignoring stale speaker stop failure: %s", type(err).__name__)
@@ -78,7 +90,7 @@ class SpeakerController:
             headers=self.headers,
             json=data,
         ) as response:
-            response.raise_for_status()
+            await self._check_response(response, "play_media")
 
     async def stop(self, entity_id: str) -> None:
         async with self._locks[entity_id]:
@@ -91,4 +103,12 @@ class SpeakerController:
             headers=self.headers,
             json={"entity_id": entity_id},
         ) as response:
-            response.raise_for_status()
+            await self._check_response(response, "media_stop")
+
+    @staticmethod
+    async def _check_response(response: aiohttp.ClientResponse, operation: str) -> None:
+        status = getattr(response, "status", 200)
+        if status < 400:
+            return
+        detail = await response.text()
+        raise SpeakerRequestError(operation, status, detail or response.reason or "request failed")
