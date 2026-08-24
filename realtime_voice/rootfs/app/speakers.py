@@ -60,15 +60,9 @@ class SpeakerController:
         assert route.entity_id
         async with self._locks[route.entity_id]:
             replaced = route.entity_id in self._active
-            if replaced:
-                try:
-                    await self._stop_request(route.entity_id)
-                except (aiohttp.ClientError, SpeakerRequestError) as err:
-                    # Short announcements may already be idle when the next turn starts.
-                    # A rejected best-effort stop must not suppress the newer response.
-                    LOGGER.info("Ignoring stale speaker stop failure: %s", type(err).__name__)
-                self._active.discard(route.entity_id)
             started = time.monotonic()
+            # play_media replaces the current URI atomically. Sending media_stop first
+            # adds a gap and can race with Sonos buffering on consecutive turns.
             await self._play_request(route, media_url)
             self._active.add(route.entity_id)
             return PlaybackResult(

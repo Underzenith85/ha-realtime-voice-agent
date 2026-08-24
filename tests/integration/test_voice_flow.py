@@ -458,7 +458,7 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
             route_test = await receive_type(speaker, "route_test_result")
             assert route_test["ok"] is True
             assert len(services.play_calls) == 2
-            assert services.stop_calls[-1]["entity_id"] == "media_player.sonos_beam"
+            assert services.stop_calls == []
 
             overlap = await start_voice_client(client, "overlap-client")
             progressive = await start_voice_client(client, "progressive-client")

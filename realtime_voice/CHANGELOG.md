@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.9
+
+- Replace consecutive Sonos media directly instead of issuing `media_stop` before every
+  turn, avoiding stop/play races that clip multi-turn reply audio.
+
 ## 0.10.8
 
 - Keep signed speaker media readable for its short TTL and support HTTP byte ranges so
