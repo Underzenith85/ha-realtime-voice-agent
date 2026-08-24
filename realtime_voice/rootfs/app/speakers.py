@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ from dataclasses import dataclass
 import aiohttp
 
 from app.routes import OutputRoute
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +49,12 @@ class SpeakerController:
         async with self._locks[route.entity_id]:
             replaced = route.entity_id in self._active
             if replaced:
-                await self._stop_request(route.entity_id)
+                try:
+                    await self._stop_request(route.entity_id)
+                except aiohttp.ClientError as err:
+                    # Short announcements may already be idle when the next turn starts.
+                    # A rejected best-effort stop must not suppress the newer response.
+                    LOGGER.info("Ignoring stale speaker stop failure: %s", type(err).__name__)
                 self._active.discard(route.entity_id)
             started = time.monotonic()
             await self._play_request(route, media_url)
