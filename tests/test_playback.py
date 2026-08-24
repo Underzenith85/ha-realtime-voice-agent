@@ -15,8 +15,8 @@ class Speakers:
         self.plays.append((route, media_url, duration_seconds))
         return PlaybackResult(request_latency_ms=12, replaced_active_playback=False)
 
-    async def stop(self, entity_id):
-        self.stops.append(entity_id)
+    async def stop(self, entity_id, *, stop_active=True):
+        self.stops.append((entity_id, stop_active))
 
 
 class FailingSpeakers(Speakers):
@@ -140,7 +140,18 @@ async def test_route_test_browser_noops_and_cancel_delegates() -> None:
 
     assert result is None
     assert speakers.plays == []
-    assert speakers.stops == ["media_player.sonos"]
+    assert speakers.stops == [("media_player.sonos", True)]
+
+
+async def test_barge_in_cancels_queue_without_stopping_inactive_response() -> None:
+    speakers = Speakers()
+    coordinator = SpeakerPlaybackCoordinator(  # type: ignore[arg-type]
+        MediaStore(), speakers, "http://voice.test:8099"
+    )
+
+    await coordinator.cancel("media_player.sonos", stop_active=False)
+
+    assert speakers.stops == [("media_player.sonos", False)]
 
 
 async def test_failed_progressive_start_cleans_up_encoder() -> None:

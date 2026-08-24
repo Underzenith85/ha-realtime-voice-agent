@@ -132,16 +132,17 @@ class SpeakerController:
         ) as response:
             await self._check_response(response, "play_media")
 
-    async def stop(self, entity_id: str) -> None:
+    async def stop(self, entity_id: str, *, stop_active: bool = True) -> None:
         # Wake queued plays before taking the lock they are holding during their
         # estimated playback wait. A fresh event lets playback submitted after
         # this cancellation queue normally behind the stop request.
         self._cancel_events[entity_id].set()
         self._cancel_events[entity_id] = asyncio.Event()
         async with self._locks[entity_id]:
-            if entity_id in self._active:
+            if stop_active and entity_id in self._active:
                 await self._stop_request(entity_id)
-            self._active.discard(entity_id)
+            if stop_active:
+                self._active.discard(entity_id)
             self._ready_at.pop(entity_id, None)
 
     async def _stop_request(self, entity_id: str) -> None:

@@ -321,10 +321,13 @@ class VoiceServer:
                     progressive_failed = False
                     pcm.clear()
                     await realtime.sync_tools()
+                    was_responding = realtime.response_active
                     await realtime.cancel()
                     realtime.begin_turn()
                     if route.entity_id and self.playback:
-                        await self.playback.cancel(route.entity_id)
+                        await self.playback.cancel(
+                            route.entity_id, stop_active=was_responding
+                        )
                 elif event.get("type") == "ptt_stop":
                     await realtime.commit()
                 elif event.get("type") == "cancel":

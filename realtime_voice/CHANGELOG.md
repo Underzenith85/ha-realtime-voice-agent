@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.13
+
+- Make queued speaker playback immediately cancellable, stop active speaker output on
+  explicit cancellation, and preserve uninterrupted unrelated playback on later turns.
+
 ## 0.10.12
 
 - Proactively expire completed signed speaker media, cap the cache with oldest-completed
