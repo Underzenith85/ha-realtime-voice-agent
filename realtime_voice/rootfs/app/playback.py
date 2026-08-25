@@ -7,13 +7,12 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from app.encoder import ProgressiveMp3Encoder, encode_mp3
+from app.encoder import PCM_BYTES_PER_SECOND, ProgressiveMp3Encoder, encode_mp3
 from app.media import MediaObject, MediaStore
 from app.routes import OutputRoute
 from app.speakers import PlaybackResult, SpeakerController, SpeakerRequestError
 
 LOGGER = logging.getLogger(__name__)
-PCM_BYTES_PER_SECOND = 24_000 * 2
 ROUTE_TEST_PCM = b"\0" * 12_000
 
 
@@ -34,18 +33,25 @@ class ProgressivePlayback:
     result: PlaybackResult
     media: MediaStore
     item: MediaObject
+    completion: asyncio.Future[float]
 
     async def write(self, chunk: bytes) -> None:
         await self.encoder.write(chunk)
 
     async def finish(self) -> None:
-        await self.encoder.finish()
-        await self.reader
+        try:
+            await self.encoder.finish()
+            await self.reader
+        finally:
+            if not self.completion.done():
+                self.completion.set_result(self.encoder.duration_seconds)
 
     async def cancel(self) -> None:
         try:
             await self.encoder.cancel()
         finally:
+            if not self.completion.done():
+                self.completion.set_result(0)
             if not self.reader.done():
                 self.reader.cancel()
             await asyncio.gather(self.reader, return_exceptions=True)
@@ -85,8 +91,13 @@ class SpeakerPlaybackCoordinator:
         await encoder.start()
         token, item = self.media.create()
         reader = asyncio.create_task(self._pump(encoder, item))
+        completion = asyncio.get_running_loop().create_future()
         try:
-            result = await self.speakers.play(route, self._media_url(token))
+            result = await self.speakers.play(
+                route,
+                self._media_url(token),
+                progressive_completion=completion,
+            )
         except BaseException:
             try:
                 await encoder.cancel()
@@ -102,6 +113,7 @@ class SpeakerPlaybackCoordinator:
             result=result,
             media=self.media,
             item=item,
+            completion=completion,
         )
 
     async def test_output(self, route: OutputRoute) -> PlaybackResult | None:

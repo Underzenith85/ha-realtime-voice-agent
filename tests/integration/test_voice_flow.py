@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import socket
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -26,6 +27,7 @@ class FakeServices:
     openai_events: list[dict[str, Any]] = field(default_factory=list)
     tool_outputs: list[dict[str, Any]] = field(default_factory=list)
     play_calls: list[dict[str, Any]] = field(default_factory=list)
+    play_call_times: list[float] = field(default_factory=list)
     stop_calls: list[dict[str, Any]] = field(default_factory=list)
     held_response: asyncio.Event = field(default_factory=asyncio.Event)
     openai_connections: list[list[dict[str, Any]]] = field(default_factory=list)
@@ -135,6 +137,7 @@ class FakeServices:
 
     async def play_media(self, request: web.Request) -> web.Response:
         self.play_calls.append(await request.json())
+        self.play_call_times.append(time.monotonic())
         if self.fail_next_play:
             self.fail_next_play = False
             raise web.HTTPInternalServerError(text="simulated player rejection")
@@ -298,11 +301,17 @@ async def test_authenticated_voice_pe_and_browser_run_concurrently(
 class FakeProgressiveEncoder:
     def __init__(self) -> None:
         self.queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self.input_bytes = 0
+
+    @property
+    def duration_seconds(self) -> float:
+        return self.input_bytes / (24_000 * 2)
 
     async def start(self) -> None:
         return None
 
     async def write(self, chunk: bytes) -> None:
+        self.input_bytes += len(chunk)
         await self.queue.put(b"progressive:" + chunk)
 
     async def chunks(self) -> AsyncIterator[bytes]:
@@ -555,6 +564,15 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
             progressive_response = await client.get(f"/media/{progressive_token}.mp3")
             assert progressive_response.status == 200
             assert await progressive_response.read() == b"progressive:browser audio"
+
+            prior_progressive_started = services.play_call_times[2]
+            await progressive.send_json({"type": "ptt_start"})
+            await progressive.send_bytes(b"plain-turn")
+            await progressive.send_json({"type": "ptt_stop"})
+            consecutive_progressive = await receive_type(progressive, "playback_status")
+            assert consecutive_progressive["mode"] == "progressive"
+            await receive_type(progressive, "response.done")
+            assert services.play_call_times[-1] - prior_progressive_started >= 0.3
 
             services.fail_next_play = True
             await progressive.send_json({"type": "ptt_start"})

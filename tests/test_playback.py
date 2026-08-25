@@ -11,8 +11,8 @@ class Speakers:
         self.plays = []
         self.stops = []
 
-    async def play(self, route, media_url, duration_seconds=0):
-        self.plays.append((route, media_url, duration_seconds))
+    async def play(self, route, media_url, duration_seconds=0, progressive_completion=None):
+        self.plays.append((route, media_url, duration_seconds, progressive_completion))
         return PlaybackResult(request_latency_ms=12, replaced_active_playback=False)
 
     async def stop(self, entity_id, *, stop_active=True):
@@ -20,7 +20,7 @@ class Speakers:
 
 
 class FailingSpeakers(Speakers):
-    async def play(self, route, media_url, duration_seconds=0):
+    async def play(self, route, media_url, duration_seconds=0, progressive_completion=None):
         raise SpeakerRequestError("play_media", 500, f"failed {media_url}")
 
 
@@ -31,6 +31,10 @@ class ProgressiveEncoder:
         self.cancelled = False
         self.writes = []
         self.queue = asyncio.Queue()
+
+    @property
+    def duration_seconds(self) -> float:
+        return sum(map(len, self.writes)) / PCM_BYTES_PER_SECOND
 
     async def start(self) -> None:
         self.started = True
@@ -69,10 +73,11 @@ async def test_buffered_playback_encodes_publishes_and_tracks_duration() -> None
 
     assert playback.raw_audio is pcm
     assert playback.result.request_latency_ms == 12
-    _, media_url, duration = speakers.plays[0]
+    _, media_url, duration, completion = speakers.plays[0]
     assert media_url.startswith("http://voice.test:8099/media/")
     assert media_url.endswith(".mp3")
     assert duration == 1
+    assert completion is None
     token = media_url.rsplit("/", 1)[-1].removesuffix(".mp3")
     item = media.inspect(token)
     assert item is not None
@@ -93,11 +98,15 @@ async def test_progressive_playback_owns_encoder_pump_and_cleanup() -> None:
     route = OutputRoute(sink="media_player", entity_id="media_player.sonos")
 
     playback = await coordinator.start_progressive(route)
+    completion = speakers.plays[0][3]
+    assert completion is playback.completion
+    assert not completion.done()
     await playback.write(b"audio")
     await playback.finish()
 
     assert encoder.started is True
     assert encoder.finished is True
+    assert completion.result() == len(b"audio") / PCM_BYTES_PER_SECOND
     media_url = speakers.plays[0][1]
     token = media_url.rsplit("/", 1)[-1].removesuffix(".mp3")
     item = media.inspect(token)
