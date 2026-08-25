@@ -12,11 +12,14 @@ from dataclasses import dataclass
 
 import aiohttp
 
+from app.ha_apis import MediaPlayerState, get_media_player_state
 from app.routes import OutputRoute
 
 LOGGER = logging.getLogger(__name__)
 SIGNED_MEDIA_PATTERN = re.compile(r"/media/[A-Za-z0-9_-]+")
-PLAYBACK_PADDING_SECONDS = 0.35
+STATE_POLL_SECONDS = 0.25
+STARTUP_GRACE_SECONDS = 5.0
+MAX_OVERRUN_SECONDS = 15.0
 
 
 class SpeakerRequestError(RuntimeError):
@@ -39,6 +42,14 @@ class PlaybackResult:
     replaced_active_playback: bool
 
 
+@dataclass(slots=True)
+class _TrackedPlayback:
+    media_url: str
+    started_at: float
+    duration_seconds: float
+    progressive_completion: Awaitable[float] | None = None
+
+
 class SpeakerController:
     def __init__(self, session: aiohttp.ClientSession, base_url: str, token: str) -> None:
         self.session = session
@@ -47,8 +58,7 @@ class SpeakerController:
         self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._cancel_events: defaultdict[str, asyncio.Event] = defaultdict(asyncio.Event)
         self._active: set[str] = set()
-        self._ready_at: defaultdict[str, float] = defaultdict(float)
-        self._progressive: dict[str, tuple[Awaitable[float], float]] = {}
+        self._playbacks: dict[str, _TrackedPlayback] = {}
 
     async def list_speakers(self) -> list[dict[str, str]]:
         async with self.session.get(
@@ -78,50 +88,21 @@ class SpeakerController:
             if cancel_event.is_set():
                 raise SpeakerPlaybackCancelled
             started = time.monotonic()
-            prior_progressive = self._progressive.get(route.entity_id)
-            if prior_progressive:
-                completion, playback_started = prior_progressive
-                duration_seconds_completed = await self._wait_for_completion(
-                    completion, cancel_event
-                )
-                self._progressive.pop(route.entity_id, None)
-                self._ready_at[route.entity_id] = max(
-                    self._ready_at[route.entity_id],
-                    playback_started + duration_seconds_completed + PLAYBACK_PADDING_SECONDS,
-                )
-            remaining = max(0.0, self._ready_at[route.entity_id] - time.monotonic())
-            if remaining:
-                LOGGER.info(
-                    "Waiting %.0fms for prior speaker playback: entity=%s",
-                    remaining * 1000,
-                    route.entity_id,
-                )
-                sleep = asyncio.create_task(asyncio.sleep(remaining))
-                cancelled = asyncio.create_task(cancel_event.wait())
-                try:
-                    done, _ = await asyncio.wait(
-                        {sleep, cancelled}, return_when=asyncio.FIRST_COMPLETED
+            prior = self._playbacks.pop(route.entity_id, None)
+            if prior:
+                if prior.progressive_completion is not None:
+                    prior.duration_seconds = await self._wait_for_completion(
+                        prior.progressive_completion, cancel_event
                     )
-                finally:
-                    for task in (sleep, cancelled):
-                        if not task.done():
-                            task.cancel()
-                    await asyncio.gather(sleep, cancelled, return_exceptions=True)
-                if cancelled in done:
-                    raise SpeakerPlaybackCancelled
+                await self._wait_for_playback(route.entity_id, prior, cancel_event)
             if cancel_event.is_set():
                 raise SpeakerPlaybackCancelled
             await self._play_request(route, media_url)
             self._active.add(route.entity_id)
             playback_started = time.monotonic()
-            if progressive_completion is not None:
-                self._progressive[route.entity_id] = (
-                    progressive_completion,
-                    playback_started,
-                )
-            elif duration_seconds > 0:
-                self._ready_at[route.entity_id] = (
-                    playback_started + duration_seconds + PLAYBACK_PADDING_SECONDS
+            if progressive_completion is not None or duration_seconds > 0:
+                self._playbacks[route.entity_id] = _TrackedPlayback(
+                    media_url, playback_started, duration_seconds, progressive_completion
                 )
             return PlaybackResult(
                 request_latency_ms=round((time.monotonic() - started) * 1000),
@@ -145,6 +126,72 @@ class SpeakerController:
         if cancelled in done:
             raise SpeakerPlaybackCancelled
         return completed.result()
+
+    async def _wait_for_playback(
+        self,
+        entity_id: str,
+        playback: _TrackedPlayback,
+        cancel_event: asyncio.Event,
+    ) -> None:
+        """Wait for HA to report completion, with duration and deadline safeguards."""
+        duration_deadline = playback.started_at + playback.duration_seconds
+        startup_deadline = playback.started_at + STARTUP_GRACE_SECONDS
+        maximum_deadline = max(duration_deadline, startup_deadline) + MAX_OVERRUN_SECONDS
+        observed_playing = False
+        last_state = "unknown"
+        while time.monotonic() < maximum_deadline:
+            if cancel_event.is_set():
+                raise SpeakerPlaybackCancelled
+            try:
+                current = await get_media_player_state(
+                    self.session, self.base_url, self.headers, entity_id
+                )
+            except (TimeoutError, aiohttp.ClientError):
+                current = None
+
+            if current is None or current.state == "unavailable":
+                # HA cannot provide a useful signal; fall back to the PCM duration.
+                if time.monotonic() >= duration_deadline:
+                    return
+            else:
+                last_state = current.state
+                if self._is_replaced(current, playback.media_url):
+                    LOGGER.info("Speaker playback was replaced: entity=%s", entity_id)
+                    return
+                if current.state == "playing":
+                    observed_playing = True
+                elif observed_playing and current.state in {"idle", "paused", "off", "standby"}:
+                    return
+                elif not observed_playing and current.state in {"idle", "paused", "off", "standby"}:
+                    # An initial idle/paused state may simply be Sonos startup latency.
+                    if time.monotonic() >= max(duration_deadline, startup_deadline):
+                        return
+
+            await self._sleep_or_cancel(STATE_POLL_SECONDS, cancel_event)
+
+        LOGGER.warning(
+            "Speaker state did not complete before timeout: entity=%s state=%s",
+            entity_id,
+            last_state,
+        )
+
+    @staticmethod
+    def _is_replaced(state: MediaPlayerState, expected_url: str) -> bool:
+        return bool(state.media_content_id and state.media_content_id != expected_url)
+
+    @staticmethod
+    async def _sleep_or_cancel(delay: float, cancel_event: asyncio.Event) -> None:
+        sleep = asyncio.create_task(asyncio.sleep(delay))
+        cancelled = asyncio.create_task(cancel_event.wait())
+        try:
+            done, _ = await asyncio.wait({sleep, cancelled}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (sleep, cancelled):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(sleep, cancelled, return_exceptions=True)
+        if cancelled in done:
+            raise SpeakerPlaybackCancelled
 
     async def _play_request(self, route: OutputRoute, media_url: str) -> None:
         data: dict[str, object] = {
@@ -184,8 +231,7 @@ class SpeakerController:
                 await self._stop_request(entity_id)
             if stop_active:
                 self._active.discard(entity_id)
-                self._ready_at.pop(entity_id, None)
-                self._progressive.pop(entity_id, None)
+                self._playbacks.pop(entity_id, None)
 
     async def _stop_request(self, entity_id: str) -> None:
         async with self.session.post(

@@ -1,5 +1,5 @@
 name: Realtime Voice Agent
-version: "0.10.14"
+version: "0.10.15"
 slug: realtime_voice_agent
 description: OpenAI Realtime voice gateway with Home Assistant and MCP tools
 url: https://github.com/Underzenith85/ha-realtime-voice-agent
