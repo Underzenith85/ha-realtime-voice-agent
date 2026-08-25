@@ -93,6 +93,43 @@ async def test_next_play_waits_for_prior_audio_duration(monkeypatch) -> None:
     assert len(session.requests) == 2
 
 
+async def test_next_play_waits_for_progressive_completion_and_remaining_duration(
+    monkeypatch,
+) -> None:
+    now = 100.0
+    waits = []
+
+    async def advance(delay: float) -> None:
+        nonlocal now
+        waits.append(delay)
+        now += delay
+
+    monkeypatch.setattr(app.speakers.time, "monotonic", lambda: now)
+    monkeypatch.setattr(app.speakers.asyncio, "sleep", advance)
+    session = Session()
+    controller = SpeakerController(session, "http://ha.test", "secret")  # type: ignore[arg-type]
+    route = OutputRoute(sink="media_player", entity_id="media_player.sonos")
+    completion = asyncio.get_running_loop().create_future()
+
+    await controller.play(
+        route,
+        "http://voice.test/progressive",
+        progressive_completion=completion,
+    )
+    queued = asyncio.create_task(
+        controller.play(route, "http://voice.test/follow-up")
+    )
+    await asyncio.sleep(0)
+    assert len(session.requests) == 1
+
+    now += 0.5
+    completion.set_result(2.0)
+    await queued
+
+    assert round(max(waits), 2) == 1.85
+    assert len(session.requests) == 2
+
+
 async def test_stop_immediately_cancels_queued_wait(monkeypatch) -> None:
     now = 100.0
     monkeypatch.setattr(app.speakers.time, "monotonic", lambda: now)
@@ -130,6 +167,40 @@ async def test_play_submitted_after_stop_queues_normally(monkeypatch) -> None:
 
     assert replacement.replaced_active_playback is False
     assert session.requests[-1][1]["media_content_id"] == "http://voice.test/replacement"
+
+
+async def test_non_stopping_cancellation_preserves_progressive_sequence(
+    monkeypatch,
+) -> None:
+    now = 100.0
+    waits = []
+
+    async def advance(delay: float) -> None:
+        nonlocal now
+        waits.append(delay)
+        now += delay
+
+    monkeypatch.setattr(app.speakers.time, "monotonic", lambda: now)
+    monkeypatch.setattr(app.speakers.asyncio, "sleep", advance)
+    session = Session()
+    controller = SpeakerController(session, "http://ha.test", "secret")  # type: ignore[arg-type]
+    route = OutputRoute(sink="media_player", entity_id="media_player.sonos")
+    completion = asyncio.get_running_loop().create_future()
+
+    await controller.play(
+        route,
+        "http://voice.test/progressive",
+        progressive_completion=completion,
+    )
+    completion.set_result(1.0)
+    await controller.stop("media_player.sonos", stop_active=False)
+    await controller.play(route, "http://voice.test/follow-up")
+
+    assert round(max(waits), 2) == 1.35
+    assert [url.rsplit("/", 1)[-1] for url, _ in session.requests] == [
+        "play_media",
+        "play_media",
+    ]
 
 
 async def test_speaker_failure_is_actionable_and_redacts_media_token() -> None:

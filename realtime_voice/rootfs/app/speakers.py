@@ -7,6 +7,7 @@ import logging
 import re
 import time
 from collections import defaultdict
+from collections.abc import Awaitable
 from dataclasses import dataclass
 
 import aiohttp
@@ -47,6 +48,7 @@ class SpeakerController:
         self._cancel_events: defaultdict[str, asyncio.Event] = defaultdict(asyncio.Event)
         self._active: set[str] = set()
         self._ready_at: defaultdict[str, float] = defaultdict(float)
+        self._progressive: dict[str, tuple[Awaitable[float], float]] = {}
 
     async def list_speakers(self) -> list[dict[str, str]]:
         async with self.session.get(
@@ -64,7 +66,11 @@ class SpeakerController:
         ]
 
     async def play(
-        self, route: OutputRoute, media_url: str, duration_seconds: float = 0
+        self,
+        route: OutputRoute,
+        media_url: str,
+        duration_seconds: float = 0,
+        progressive_completion: Awaitable[float] | None = None,
     ) -> PlaybackResult:
         assert route.entity_id
         cancel_event = self._cancel_events[route.entity_id]
@@ -72,7 +78,20 @@ class SpeakerController:
             if cancel_event.is_set():
                 raise SpeakerPlaybackCancelled
             started = time.monotonic()
-            remaining = max(0.0, self._ready_at[route.entity_id] - started)
+            prior_progressive = self._progressive.get(route.entity_id)
+            if prior_progressive:
+                completion, playback_started = prior_progressive
+                duration_seconds_completed = await self._wait_for_completion(
+                    completion, cancel_event
+                )
+                self._progressive.pop(route.entity_id, None)
+                self._ready_at[route.entity_id] = max(
+                    self._ready_at[route.entity_id],
+                    playback_started
+                    + duration_seconds_completed
+                    + PLAYBACK_PADDING_SECONDS,
+                )
+            remaining = max(0.0, self._ready_at[route.entity_id] - time.monotonic())
             if remaining:
                 LOGGER.info(
                     "Waiting %.0fms for prior speaker playback: entity=%s",
@@ -96,14 +115,38 @@ class SpeakerController:
                 raise SpeakerPlaybackCancelled
             await self._play_request(route, media_url)
             self._active.add(route.entity_id)
-            if duration_seconds > 0:
+            playback_started = time.monotonic()
+            if progressive_completion is not None:
+                self._progressive[route.entity_id] = (
+                    progressive_completion,
+                    playback_started,
+                )
+            elif duration_seconds > 0:
                 self._ready_at[route.entity_id] = (
-                    time.monotonic() + duration_seconds + PLAYBACK_PADDING_SECONDS
+                    playback_started + duration_seconds + PLAYBACK_PADDING_SECONDS
                 )
             return PlaybackResult(
                 request_latency_ms=round((time.monotonic() - started) * 1000),
                 replaced_active_playback=False,
             )
+
+    @staticmethod
+    async def _wait_for_completion(
+        completion: Awaitable[float], cancel_event: asyncio.Event
+    ) -> float:
+        completed = asyncio.ensure_future(completion)
+        cancelled = asyncio.create_task(cancel_event.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {completed, cancelled}, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            if not cancelled.done():
+                cancelled.cancel()
+            await asyncio.gather(cancelled, return_exceptions=True)
+        if cancelled in done:
+            raise SpeakerPlaybackCancelled
+        return completed.result()
 
     async def _play_request(self, route: OutputRoute, media_url: str) -> None:
         data: dict[str, object] = {
@@ -143,7 +186,8 @@ class SpeakerController:
                 await self._stop_request(entity_id)
             if stop_active:
                 self._active.discard(entity_id)
-            self._ready_at.pop(entity_id, None)
+                self._ready_at.pop(entity_id, None)
+                self._progressive.pop(entity_id, None)
 
     async def _stop_request(self, entity_id: str) -> None:
         async with self.session.post(

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
+PCM_BYTES_PER_SECOND = 24_000 * 2
+
 
 async def encode_mp3(pcm: bytes) -> bytes:
     process = await asyncio.create_subprocess_exec(
@@ -37,6 +39,11 @@ async def encode_mp3(pcm: bytes) -> bytes:
 class ProgressiveMp3Encoder:
     def __init__(self) -> None:
         self.process: asyncio.subprocess.Process | None = None
+        self.input_bytes = 0
+
+    @property
+    def duration_seconds(self) -> float:
+        return self.input_bytes / PCM_BYTES_PER_SECOND
 
     async def start(self) -> None:
         self.process = await asyncio.create_subprocess_exec(
@@ -67,6 +74,7 @@ class ProgressiveMp3Encoder:
         assert self.process and self.process.stdin
         self.process.stdin.write(chunk)
         await self.process.stdin.drain()
+        self.input_bytes += len(chunk)
 
     async def chunks(self) -> AsyncIterator[bytes]:
         assert self.process and self.process.stdout
