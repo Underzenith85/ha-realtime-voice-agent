@@ -2,6 +2,8 @@ import asyncio
 from contextlib import asynccontextmanager
 
 import app.speakers
+import pytest
+from app.ha_apis import MediaPlayerState
 from app.routes import OutputRoute
 from app.speakers import SpeakerController, SpeakerPlaybackCancelled, SpeakerRequestError
 
@@ -28,6 +30,14 @@ class Session:
         self.requests.append((url, kwargs["json"]))
         await asyncio.sleep(0)
         yield Response()
+
+
+@pytest.fixture(autouse=True)
+def unavailable_state(monkeypatch):
+    async def get_state(*args):
+        return None
+
+    monkeypatch.setattr(app.speakers, "get_media_player_state", get_state)
 
 
 async def test_latest_response_replaces_directly_and_preserves_options() -> None:
@@ -89,7 +99,7 @@ async def test_next_play_waits_for_prior_audio_duration(monkeypatch) -> None:
     await controller.play(route, "http://voice.test/first", duration_seconds=2)
     await controller.play(route, "http://voice.test/second", duration_seconds=1)
 
-    assert round(max(waits), 2) == 2.35
+    assert round(sum(waits), 2) == 2.0
     assert len(session.requests) == 2
 
 
@@ -124,7 +134,7 @@ async def test_next_play_waits_for_progressive_completion_and_remaining_duration
     completion.set_result(2.0)
     await queued
 
-    assert round(max(waits), 2) == 1.85
+    assert round(sum(waits), 2) == 1.5
     assert len(session.requests) == 2
 
 
@@ -194,11 +204,93 @@ async def test_non_stopping_cancellation_preserves_progressive_sequence(
     await controller.stop("media_player.sonos", stop_active=False)
     await controller.play(route, "http://voice.test/follow-up")
 
-    assert round(max(waits), 2) == 1.35
+    assert round(sum(waits), 2) == 1.0
     assert [url.rsplit("/", 1)[-1] for url, _ in session.requests] == [
         "play_media",
         "play_media",
     ]
+
+
+async def test_state_completion_releases_queue_without_duration_padding(monkeypatch) -> None:
+    states = iter(
+        [
+            MediaPlayerState("playing", "http://voice.test/first"),
+            MediaPlayerState("idle", "http://voice.test/first"),
+        ]
+    )
+
+    async def get_state(*args):
+        return next(states)
+
+    monkeypatch.setattr(app.speakers, "get_media_player_state", get_state)
+    controller = SpeakerController(Session(), "http://ha.test", "secret")  # type: ignore[arg-type]
+    route = OutputRoute(sink="media_player", entity_id="media_player.sonos")
+
+    await controller.play(route, "http://voice.test/first", duration_seconds=10)
+    await controller.play(route, "http://voice.test/second")
+
+
+async def test_delayed_startup_does_not_treat_initial_idle_as_completion(monkeypatch) -> None:
+    observed = []
+    states = iter(
+        [
+            MediaPlayerState("idle", None),
+            MediaPlayerState("idle", None),
+            MediaPlayerState("playing", "http://voice.test/first"),
+            MediaPlayerState("paused", "http://voice.test/first"),
+        ]
+    )
+
+    async def get_state(*args):
+        state = next(states)
+        observed.append(state.state)
+        return state
+
+    monkeypatch.setattr(app.speakers, "get_media_player_state", get_state)
+    controller = SpeakerController(Session(), "http://ha.test", "secret")  # type: ignore[arg-type]
+    route = OutputRoute(sink="media_player", entity_id="media_player.sonos")
+
+    await controller.play(route, "http://voice.test/first", duration_seconds=1)
+    await controller.play(route, "http://voice.test/second")
+
+    assert observed == ["idle", "idle", "playing", "paused"]
+
+
+async def test_stale_playing_state_releases_queue_at_maximum_timeout(monkeypatch) -> None:
+    now = 100.0
+
+    async def advance(delay: float) -> None:
+        nonlocal now
+        now += delay
+
+    async def get_state(*args):
+        return MediaPlayerState("playing", "http://voice.test/first")
+
+    monkeypatch.setattr(app.speakers.time, "monotonic", lambda: now)
+    monkeypatch.setattr(app.speakers.asyncio, "sleep", advance)
+    monkeypatch.setattr(app.speakers, "get_media_player_state", get_state)
+    controller = SpeakerController(Session(), "http://ha.test", "secret")  # type: ignore[arg-type]
+    route = OutputRoute(sink="media_player", entity_id="media_player.sonos")
+
+    await controller.play(route, "http://voice.test/first", duration_seconds=1)
+    await controller.play(route, "http://voice.test/second")
+
+    assert now == 120.0
+
+
+async def test_replaced_playback_releases_queue_immediately(monkeypatch) -> None:
+    async def get_state(*args):
+        return MediaPlayerState("playing", "http://music.test/other")
+
+    monkeypatch.setattr(app.speakers, "get_media_player_state", get_state)
+    session = Session()
+    controller = SpeakerController(session, "http://ha.test", "secret")  # type: ignore[arg-type]
+    route = OutputRoute(sink="media_player", entity_id="media_player.sonos")
+
+    await controller.play(route, "http://voice.test/first", duration_seconds=30)
+    await controller.play(route, "http://voice.test/second")
+
+    assert len(session.requests) == 2
 
 
 async def test_speaker_failure_is_actionable_and_redacts_media_token() -> None:

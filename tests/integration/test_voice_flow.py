@@ -33,6 +33,7 @@ class FakeServices:
     openai_connections: list[list[dict[str, Any]]] = field(default_factory=list)
     fail_next_play: bool = False
     reject_with_quota_error: bool = False
+    player_state_reads: int = 0
 
     async def realtime(self, request: web.Request) -> web.WebSocketResponse:
         assert request.headers["Authorization"] == "Bearer test-key"
@@ -133,6 +134,17 @@ class FakeServices:
                 },
                 {"entity_id": "light.kitchen", "attributes": {}},
             ]
+        )
+
+    async def player_state(self, request: web.Request) -> web.Response:
+        assert request.match_info["entity_id"] == "media_player.sonos_beam"
+        self.player_state_reads += 1
+        return web.json_response(
+            {
+                "entity_id": "media_player.sonos_beam",
+                "state": "playing" if self.player_state_reads % 2 else "idle",
+                "attributes": {"media_content_id": self.play_calls[-1]["media_content_id"]},
+            }
         )
 
     async def play_media(self, request: web.Request) -> web.Response:
@@ -339,6 +351,7 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
     external = web.Application()
     external.router.add_get("/v1/realtime", services.realtime)
     external.router.add_get("/api/states", services.states)
+    external.router.add_get("/api/states/{entity_id}", services.player_state)
     external.router.add_post("/api/services/media_player/play_media", services.play_media)
     external.router.add_post("/api/services/media_player/media_stop", services.stop_media)
 
@@ -572,7 +585,7 @@ async def test_complete_browser_and_mcp_assisted_speaker_turns(
             consecutive_progressive = await receive_type(progressive, "playback_status")
             assert consecutive_progressive["mode"] == "progressive"
             await receive_type(progressive, "response.done")
-            assert services.play_call_times[-1] - prior_progressive_started >= 0.3
+            assert services.play_call_times[-1] - prior_progressive_started >= 0.2
 
             services.fail_next_play = True
             await progressive.send_json({"type": "ptt_start"})

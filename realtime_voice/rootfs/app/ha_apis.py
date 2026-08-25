@@ -2,12 +2,42 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
 import aiohttp
 
 from app.config import McpServerConfig
+
+
+@dataclass(frozen=True, slots=True)
+class MediaPlayerState:
+    """The small part of an HA media-player state needed for queue sequencing."""
+
+    state: str
+    media_content_id: str | None
+
+
+async def get_media_player_state(
+    session: aiohttp.ClientSession,
+    base_url: str,
+    headers: dict[str, str],
+    entity_id: str,
+) -> MediaPlayerState | None:
+    """Read a media player state, returning None when HA no longer has the entity."""
+    url = f"{base_url.rstrip('/')}/api/states/{quote(entity_id, safe='')}"
+    async with session.get(url, headers=headers) as response:
+        if response.status == 404:
+            return None
+        response.raise_for_status()
+        payload: dict[str, Any] = await response.json()
+    attributes = payload.get("attributes")
+    media_content_id = attributes.get("media_content_id") if isinstance(attributes, dict) else None
+    return MediaPlayerState(
+        state=str(payload.get("state", "unknown")).lower(),
+        media_content_id=media_content_id if isinstance(media_content_id, str) else None,
+    )
 
 
 async def discover_managed_mcp_configs(
