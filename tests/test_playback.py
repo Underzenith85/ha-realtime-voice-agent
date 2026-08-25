@@ -11,9 +11,7 @@ class Speakers:
         self.plays = []
         self.stops = []
 
-    async def play(
-        self, route, media_url, duration_seconds=0, progressive_completion=None
-    ):
+    async def play(self, route, media_url, duration_seconds=0, progressive_completion=None):
         self.plays.append((route, media_url, duration_seconds, progressive_completion))
         return PlaybackResult(request_latency_ms=12, replaced_active_playback=False)
 
@@ -22,9 +20,7 @@ class Speakers:
 
 
 class FailingSpeakers(Speakers):
-    async def play(
-        self, route, media_url, duration_seconds=0, progressive_completion=None
-    ):
+    async def play(self, route, media_url, duration_seconds=0, progressive_completion=None):
         raise SpeakerRequestError("play_media", 500, f"failed {media_url}")
 
 

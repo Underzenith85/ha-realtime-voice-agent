@@ -116,9 +116,7 @@ async def test_next_play_waits_for_progressive_completion_and_remaining_duration
         "http://voice.test/progressive",
         progressive_completion=completion,
     )
-    queued = asyncio.create_task(
-        controller.play(route, "http://voice.test/follow-up")
-    )
+    queued = asyncio.create_task(controller.play(route, "http://voice.test/follow-up"))
     await asyncio.sleep(0)
     assert len(session.requests) == 1
 

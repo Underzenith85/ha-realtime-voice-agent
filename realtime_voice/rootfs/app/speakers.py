@@ -87,9 +87,7 @@ class SpeakerController:
                 self._progressive.pop(route.entity_id, None)
                 self._ready_at[route.entity_id] = max(
                     self._ready_at[route.entity_id],
-                    playback_started
-                    + duration_seconds_completed
-                    + PLAYBACK_PADDING_SECONDS,
+                    playback_started + duration_seconds_completed + PLAYBACK_PADDING_SECONDS,
                 )
             remaining = max(0.0, self._ready_at[route.entity_id] - time.monotonic())
             if remaining:
