@@ -76,7 +76,7 @@ jobs:
           uv run pytest -q
 
       - name: Validate Home Assistant App configuration
-        uses: frenck/action-addon-linter@v2.21.0
+        uses: frenck/action-addon-linter@v2.21.1
         with:
           path: "./realtime_voice"
 
